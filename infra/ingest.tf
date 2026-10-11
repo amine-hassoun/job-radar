@@ -2,7 +2,7 @@ data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
 locals {
-  ingest_secret_param = "/peach/ingest-shared-secret"
+  ingest_secret_param = "/job-radar/ingest-shared-secret"
 }
 
 data "archive_file" "ingest" {
@@ -12,7 +12,7 @@ data "archive_file" "ingest" {
 }
 
 resource "aws_cloudwatch_log_group" "ingest" {
-  name              = "/aws/lambda/peach-ingest"
+  name              = "/aws/lambda/job-radar-ingest"
   retention_in_days = 14
 }
 
@@ -27,7 +27,7 @@ data "aws_iam_policy_document" "lambda_assume" {
 }
 
 resource "aws_iam_role" "ingest" {
-  name               = "peach-ingest"
+  name               = "job-radar-ingest"
   assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
 }
 
@@ -50,13 +50,13 @@ data "aws_iam_policy_document" "ingest" {
 }
 
 resource "aws_iam_role_policy" "ingest" {
-  name   = "peach-ingest"
+  name   = "job-radar-ingest"
   role   = aws_iam_role.ingest.id
   policy = data.aws_iam_policy_document.ingest.json
 }
 
 resource "aws_lambda_function" "ingest" {
-  function_name    = "peach-ingest"
+  function_name    = "job-radar-ingest"
   role             = aws_iam_role.ingest.arn
   runtime          = "python3.13"
   handler          = "handler.handler"

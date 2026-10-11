@@ -1,4 +1,4 @@
-console.log('[peach] content script loaded', window.location.href);
+console.log('[job-radar] content script loaded', window.location.href);
 
 const SELECTORS = {
   title: [
@@ -82,9 +82,9 @@ function capture() {
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg?.type === 'PEACH_CAPTURE') {
+  if (msg?.type === 'JOB_RADAR_CAPTURE') {
     const result = capture();
-    console.log('[peach]', result);
+    console.log('[job-radar]', result);
     sendResponse(result);
   }
 });

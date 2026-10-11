@@ -1,5 +1,5 @@
 resource "aws_dynamodb_table" "jobs" {
-  name           = "peach-jobs"
+  name           = "job-radar-jobs"
   billing_mode   = "PROVISIONED"
   read_capacity  = 2
   write_capacity = 2
