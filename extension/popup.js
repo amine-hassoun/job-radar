@@ -1,9 +1,9 @@
 const out = document.getElementById('out');
 
 async function send(job) {
-  const res = await fetch(PEACH_CONFIG.endpoint, {
+  const res = await fetch(JOB_RADAR_CONFIG.endpoint, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-peach-key': PEACH_CONFIG.key },
+    headers: { 'Content-Type': 'application/json', 'x-job-radar-key': JOB_RADAR_CONFIG.key },
     body: JSON.stringify({ jobs: [job] }),
   });
   const body = await res.json().catch(() => ({}));
@@ -24,7 +24,7 @@ document.getElementById('capture').addEventListener('click', async () => {
 
   let res;
   try {
-    res = await chrome.tabs.sendMessage(tab.id, { type: 'PEACH_CAPTURE' });
+    res = await chrome.tabs.sendMessage(tab.id, { type: 'JOB_RADAR_CAPTURE' });
   } catch (err) {
     out.textContent = `❌ ${err.message}\nNo content script here: not a LinkedIn jobs page, or reload the tab.`;
     return;

@@ -62,7 +62,7 @@ def to_item(job):
 
 
 def handler(event, context):
-    sent = (event.get("headers") or {}).get("x-peach-key", "")
+    sent = (event.get("headers") or {}).get("x-job-radar-key", "")
     if not hmac.compare_digest(sent.encode(), get_secret().encode()):
         return reply(401, {"error": "unauthorized"})
 

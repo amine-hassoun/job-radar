@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Peach Capture",
+  "name": "Job Radar Capture",
   "version": "0.1.0",
   "description": "Capture the LinkedIn job posting I'm viewing, for personal fit scoring.",
   "action": { "default_popup": "popup.html" },

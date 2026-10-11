@@ -3,7 +3,7 @@ provider "aws" {
 
   default_tags {
     tags = {
-      Project   = "peach"
+      Project   = "job-radar"
       ManagedBy = "terraform"
     }
   }
