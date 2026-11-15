@@ -1,20 +1,20 @@
+"""POST endpoint for the Chrome extension: validate, score, store."""
 import base64
 import hmac
 import json
 import os
 import re
-import time
-from datetime import datetime, timezone
 
 import boto3
 from botocore.exceptions import ClientError
 
-TABLE = boto3.resource("dynamodb").Table(os.environ["TABLE_NAME"])
+import scoring
+import store
+
 SSM = boto3.client("ssm")
 SECRET_PARAM = os.environ["SECRET_PARAM_NAME"]
 
 SOURCE = "linkedin-extension"
-TTL_SECONDS = 30 * 24 * 3600
 MAX_BATCH = 100
 JOB_ID_RE = re.compile(r"^\d{5,20}$")
 
@@ -45,20 +45,17 @@ def to_item(job):
     description = str(job.get("description", "")).strip()[:15000]
     if not JOB_ID_RE.match(job_id) or not title or not company or len(description) < 100:
         return None
-    item = {
-        "job_id": f"{SOURCE}#{job_id}",
-        "source": SOURCE,
-        "title": title,
-        "company": company,
-        "description": description,
-        "url": f"https://www.linkedin.com/jobs/view/{job_id}/",
-        "ingested_at": datetime.now(timezone.utc).isoformat(),
-        "expires_at": int(time.time()) + TTL_SECONDS,
-    }
     location = str(job.get("location") or "").strip()[:200]
-    if location:
-        item["location"] = location
-    return item
+    return store.build_item(
+        source=SOURCE,
+        ext_id=job_id,
+        title=title,
+        company=company,
+        location=location,
+        description=description,
+        url=f"https://www.linkedin.com/jobs/view/{job_id}/",
+        similarity=scoring.similarities([description])[0],
+    )
 
 
 def handler(event, context):
@@ -76,21 +73,20 @@ def handler(event, context):
     except (ValueError, KeyError, TypeError):
         return reply(400, {"error": 'expected JSON {"jobs": [1-100 items]}'})
 
-    stored, duplicates, rejected = 0, 0, []
+    stored, duplicates, rejected, scores = 0, 0, [], []
     for index, job in enumerate(jobs):
         item = to_item(job)
         if item is None:
             rejected.append(index)
             continue
         try:
-            TABLE.put_item(Item=item, ConditionExpression="attribute_not_exists(job_id)")
-            stored += 1
-        except ClientError as err:
-            code = err.response["Error"]["Code"]
-            if code == "ConditionalCheckFailedException":
-                duplicates += 1
+            if store.put_new(item):
+                stored += 1
+                scores.append(item["score"])
             else:
-                print(json.dumps({"error": code, "job_id": item["job_id"]}))
-                return reply(500, {"error": "storage_error"})
+                duplicates += 1
+        except ClientError as err:
+            print(json.dumps({"error": err.response["Error"]["Code"], "job_id": item["job_id"]}))
+            return reply(500, {"error": "storage_error"})
 
-    return reply(200, {"stored": stored, "duplicates": duplicates, "rejected": rejected})
+    return reply(200, {"stored": stored, "duplicates": duplicates, "rejected": rejected, "scores": scores})

@@ -1,0 +1,49 @@
+name: checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Guard against non-Always-Free patterns
+        run: |
+          FORBIDDEN='aws_nat_gateway|aws_lb|aws_elb|aws_db_instance|aws_db_cluster|aws_elasticache_cluster|aws_elasticache_replication_group|aws_redshift_cluster|aws_instance|aws_eks_cluster'
+          if grep -rEl "resource \"($FORBIDDEN)\"" --include="*.tf" infra; then
+            echo "Forbidden resource type: this project is Always-Free-only by design."; exit 1
+          fi
+          if grep -rn "PAY_PER_REQUEST" --include="*.tf" infra; then
+            echo "DynamoDB must be PROVISIONED (shared 25 WCU/RCU pool)."; exit 1
+          fi
+          if grep -rn "vpc_config" --include="*.tf" infra; then
+            echo "VPC-attached Lambda needs a NAT Gateway for internet egress (not Always Free)."; exit 1
+          fi
+
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform fmt / validate
+        working-directory: infra
+        run: |
+          terraform fmt -check -recursive
+          terraform init -backend=false
+          terraform validate
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Unit tests
+        run: |
+          pip install boto3 "moto[dynamodb,ssm,sns]" pytest
+          pytest tests -q
+
+      - name: checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          config_file: .checkov.yaml

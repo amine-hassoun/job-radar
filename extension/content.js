@@ -88,3 +88,41 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     sendResponse(result);
   }
 });
+
+// ---- Record mode: auto-capture each posting you OPEN (never navigates for you) ----
+// LinkedIn is a single-page app, so we poll the URL instead of waiting for page loads.
+const MAX_ATTEMPTS = 6; // ~12 s for the DOM to catch up with a newly selected job
+const sentJobIds = new Set();
+let attemptedJobId = null;
+let attempts = 0;
+let lastDescription = null;
+
+async function recordTick() {
+  try {
+    const { recordMode } = await chrome.storage.local.get('recordMode');
+    if (!recordMode) return;
+
+    const jobId = getJobId();
+    if (!jobId || sentJobIds.has(jobId)) return;
+    if (jobId !== attemptedJobId) {
+      attemptedJobId = jobId;
+      attempts = 0;
+    }
+    if (attempts >= MAX_ATTEMPTS) return;
+    attempts += 1;
+
+    const result = capture();
+    if (!result.ok) return;
+    // Same text as the previous job = the right-hand pane hasn't re-rendered yet. Retry next tick.
+    if (result.job.description === lastDescription) return;
+
+    lastDescription = result.job.description;
+    sentJobIds.add(jobId);
+    chrome.runtime.sendMessage({ type: 'JOB_RADAR_SEND', job: result.job });
+  } catch (err) {
+    // "Extension context invalidated" after a reload: harmless, the page just needs a refresh.
+    console.debug('[job-radar] record tick skipped:', err.message);
+  }
+}
+
+setInterval(recordTick, 2000);

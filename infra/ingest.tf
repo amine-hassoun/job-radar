@@ -1,29 +1,10 @@
-data "aws_caller_identity" "current" {}
-data "aws_region" "current" {}
-
 locals {
   ingest_secret_param = "/job-radar/ingest-shared-secret"
-}
-
-data "archive_file" "ingest" {
-  type        = "zip"
-  source_dir  = "${path.module}/lambda/ingest"
-  output_path = "${path.module}/build/ingest.zip"
 }
 
 resource "aws_cloudwatch_log_group" "ingest" {
   name              = "/aws/lambda/job-radar-ingest"
   retention_in_days = 14
-}
-
-data "aws_iam_policy_document" "lambda_assume" {
-  statement {
-    actions = ["sts:AssumeRole"]
-    principals {
-      type        = "Service"
-      identifiers = ["lambda.amazonaws.com"]
-    }
-  }
 }
 
 resource "aws_iam_role" "ingest" {
@@ -40,7 +21,7 @@ data "aws_iam_policy_document" "ingest" {
   statement {
     sid       = "ReadSharedSecret"
     actions   = ["ssm:GetParameter"]
-    resources = ["arn:aws:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:parameter${local.ingest_secret_param}"]
+    resources = ["${local.ssm_arn_prefix}${local.ingest_secret_param}"]
   }
   statement {
     sid       = "WriteLogs"
@@ -59,9 +40,9 @@ resource "aws_lambda_function" "ingest" {
   function_name    = "job-radar-ingest"
   role             = aws_iam_role.ingest.arn
   runtime          = "python3.13"
-  handler          = "handler.handler"
-  filename         = data.archive_file.ingest.output_path
-  source_code_hash = data.archive_file.ingest.output_base64sha256
+  handler          = "ingest.handler"
+  filename         = data.archive_file.app.output_path
+  source_code_hash = data.archive_file.app.output_base64sha256
   timeout          = 10
   memory_size      = 128
 

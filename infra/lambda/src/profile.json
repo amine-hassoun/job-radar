@@ -1,0 +1,49 @@
+{
+  "digest_min_score": 45,
+  "store_min_score": 15,
+  "max_digest_items": 25,
+
+  "profile_text": "devops engineer cloud infrastructure platform engineering site reliability sre devsecops aws terraform kubernetes helm docker github actions ci/cd pipelines infrastructure as code ansible prometheus grafana observability monitoring linux bash python automation iam least privilege oidc security trivy checkov lambda dynamodb vpc cloudwatch gitops containers deployment reliability incident on-call",
+
+  "title_include": ["devops", "sre", "site reliability", "platform engineer", "platform engineering", "cloud engineer", "cloud infrastructure", "infrastructure engineer", "infrastructure automation", "devsecops", "cloudops", "automation engineer", "mlops", "finops", "kubernetes", "terraform"],
+  "title_exclude": ["intern", "internship", "stage", "alternance", "apprenti", "apprentice", "sales", "account executive", "recruiter", "designer", "data scientist", "frontend", "front-end", "ios", "android", "manager", "director", "head of"],
+
+  "skills": [
+    {"name": "terraform", "weight": 9, "pattern": "terraform|opentofu"},
+    {"name": "kubernetes", "weight": 9, "pattern": "kubernetes|k8s|\\beks\\b"},
+    {"name": "aws", "weight": 8, "pattern": "\\baws\\b|amazon web services"},
+    {"name": "github actions", "weight": 6, "pattern": "github actions"},
+    {"name": "ci/cd", "weight": 5, "pattern": "ci/cd|ci-cd|continuous (integration|delivery|deployment)"},
+    {"name": "docker", "weight": 5, "pattern": "docker|containeri[sz]"},
+    {"name": "helm", "weight": 4, "pattern": "\\bhelm\\b"},
+    {"name": "prometheus", "weight": 4, "pattern": "prometheus"},
+    {"name": "ansible", "weight": 4, "pattern": "ansible"},
+    {"name": "infrastructure as code", "weight": 4, "pattern": "infrastructure[- ]as[- ]code|\\biac\\b"},
+    {"name": "grafana", "weight": 3, "pattern": "grafana"},
+    {"name": "observability", "weight": 3, "pattern": "observability|monitoring"},
+    {"name": "linux", "weight": 3, "pattern": "linux"},
+    {"name": "python", "weight": 3, "pattern": "python"},
+    {"name": "devsecops", "weight": 3, "pattern": "devsecops|shift[- ]left"},
+    {"name": "iam", "weight": 2, "pattern": "\\biam\\b|least[- ]privilege|\\boidc\\b"},
+    {"name": "bash", "weight": 2, "pattern": "\\bbash\\b|shell script"},
+    {"name": "trivy/checkov", "weight": 2, "pattern": "trivy|checkov"},
+    {"name": "lambda", "weight": 2, "pattern": "\\blambda\\b|serverless"},
+    {"name": "gitops", "weight": 2, "pattern": "gitops|argo ?cd|\\bflux\\b"},
+    {"name": "sre", "weight": 2, "pattern": "\\bsre\\b|site reliability|\\bslo\\b|\\bsli\\b"}
+  ],
+
+  "remote_pattern": "\\b(remote|télétravail|teletravail|work from home|wfh|anywhere|worldwide|fully distributed)\\b",
+  "location_ok_pattern": "\\b(france|paris|lyon|lille|nancy|metz|strasbourg|nantes|toulouse|bordeaux|marseille|luxembourg|belgium|bruxelles|brussels|germany|netherlands|amsterdam|spain|europe|emea|eu)\\b",
+
+  "eligibility_patterns": [
+    "\\b(us|u\\.s\\.|usa|united states)[- ]?(only|citizens?|based only)\\b",
+    "must (be )?(located|based|reside|living) in (the )?(us|u\\.s\\.|united states|usa|canada|uk)\\b",
+    "(us|u\\.s\\.) (work )?authori[sz]ation",
+    "(right|authori[sz]ation|eligib\\w+) to work in the (us|uk|united states|united kingdom)",
+    "security clearance",
+    "sponsorship (is )?not (available|provided)",
+    "(fluent|native|proficien\\w+)[^.\\n]{0,40}(german|dutch|spanish|italian|portuguese|polish|swedish|danish)"
+  ],
+
+  "seniority_penalty_pattern": "\\b(principal|staff engineer|head of|director|vp)\\b|\\b(8|9|10|12|15)\\+? ?years"
+}

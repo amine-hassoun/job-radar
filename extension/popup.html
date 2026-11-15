@@ -5,13 +5,16 @@
     <style>
       body { width: 320px; font: 13px system-ui; margin: 12px; }
       button { width: 100%; padding: 8px; cursor: pointer; }
+      label { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
       pre { white-space: pre-wrap; max-height: 220px; overflow: auto; }
+      #stats { color: #555; margin-top: 8px; }
     </style>
   </head>
   <body>
-    <button id="capture">Capture this job</button>
+    <label><input type="checkbox" id="record" /> Record mode (auto-capture jobs I open)</label>
+    <button id="capture">Capture this job now</button>
     <pre id="out"></pre>
-    <script src="config.js"></script>
+    <div id="stats"></div>
     <script src="popup.js"></script>
   </body>
 </html>

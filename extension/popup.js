@@ -1,19 +1,24 @@
 const out = document.getElementById('out');
+const toggle = document.getElementById('record');
+const statsEl = document.getElementById('stats');
 
-async function send(job) {
-  const res = await fetch(JOB_RADAR_CONFIG.endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-job-radar-key': JOB_RADAR_CONFIG.key },
-    body: JSON.stringify({ jobs: [job] }),
-  });
-  const body = await res.json().catch(() => ({}));
-  return { status: res.status, body };
+function renderStats(stats = { stored: 0, duplicates: 0, errors: 0 }) {
+  statsEl.textContent = `Saved ${stats.stored} · already had ${stats.duplicates} · errors ${stats.errors}`;
 }
 
-function summarize({ status, body }) {
+chrome.storage.local.get(['recordMode', 'stats']).then(({ recordMode, stats }) => {
+  toggle.checked = !!recordMode;
+  renderStats(stats);
+});
+
+toggle.addEventListener('change', () => chrome.storage.local.set({ recordMode: toggle.checked }));
+chrome.storage.onChanged.addListener((changes) => changes.stats && renderStats(changes.stats.newValue));
+
+function summarize({ status, body, error }) {
+  if (status === 0) return `❌ Network error: ${error}`;
   if (status === 401) return '❌ Server rejected the key (check config.js)';
   if (status !== 200) return `❌ Server error (${status})`;
-  if (body.stored) return '✅ Saved';
+  if (body.stored) return `✅ Saved · score ${body.scores?.[0] ?? '?'}`;
   if (body.duplicates) return '↺ Already captured';
   return '⚠️ Server rejected the posting (failed validation)';
 }
@@ -35,10 +40,6 @@ document.getElementById('capture').addEventListener('click', async () => {
   }
 
   out.textContent = `Sending "${res.job.title}"…`;
-  try {
-    const result = await send(res.job);
-    out.textContent = `${summarize(result)}\n${res.job.title} — ${res.job.company}\njobId ${res.job.jobId}`;
-  } catch (err) {
-    out.textContent = `❌ Network error: ${err.message}`;
-  }
+  const result = await chrome.runtime.sendMessage({ type: 'JOB_RADAR_SEND', job: res.job });
+  out.textContent = `${summarize(result)}\n${res.job.title} — ${res.job.company}\njobId ${res.job.jobId}`;
 });
