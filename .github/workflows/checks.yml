@@ -27,7 +27,7 @@ jobs:
             echo "VPC-attached Lambda needs a NAT Gateway for internet egress (not Always Free)."; exit 1
           fi
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
       - name: Terraform fmt / validate
         working-directory: infra
         run: |
