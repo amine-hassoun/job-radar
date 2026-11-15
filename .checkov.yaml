@@ -14,3 +14,5 @@ skip-check:
   - CKV_AWS_26    # SNS encryption: see digest.tf comment
   - CKV_AWS_28    # DynamoDB PITR: data is re-fetchable
   - CKV_AWS_119   # DynamoDB CMK: public job data only
+  - CKV_AWS_301   # Public Lambda permission: required for a Function URL with AuthType NONE; gated by shared secret
+  - CKV2_AWS_16   # DynamoDB auto scaling: fixed small capacity on purpose, scaling could exceed the Always Free pool
