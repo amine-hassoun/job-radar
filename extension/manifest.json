@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Job Radar Capture",
-  "version": "0.2.0",
+  "version": "0.3.3",
   "description": "Capture the LinkedIn job postings I'm viewing, for personal fit scoring.",
   "action": { "default_popup": "popup.html" },
-  "permissions": ["storage"],
+  "permissions": ["storage", "clipboardWrite"],
   "background": { "service_worker": "background.js" },
   "host_permissions": ["https://*.lambda-url.eu-west-3.on.aws/*"],
   "content_scripts": [

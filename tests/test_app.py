@@ -88,3 +88,56 @@ def test_digest_sends_once_and_clears(aws):
     aws.ingest.handler(event([job("1111111111"), job("2222222222", title="SRE")]), None)
     assert aws.digest.handler({}, None)["sent"] == 2
     assert aws.digest.handler({}, None)["sent"] == 0  # marked as notified, sparse index emptied
+
+
+# ---- extension API: list / export / delete ----
+def call(aws, body):
+    out = aws.ingest.handler({"headers": {"x-job-radar-key": "s3cret"}, "body": json.dumps(body)}, None)
+    return out["statusCode"], json.loads(out["body"])
+
+
+def test_list_only_fits_and_order(aws):
+    aws.ingest.handler(event([job("1111111111", title="DevOps Engineer"),
+                              job("2222222222", title="Java Developer",
+                                  desc="Spring microservices for banking, Oracle and Maven. " * 4)]), None)
+    status, body = call(aws, {"action": "list"})
+    assert status == 200 and [j["jobId"] for j in body["jobs"]][0] == "1111111111" and len(body["jobs"]) == 2
+    status, body = call(aws, {"action": "list", "only_fits": True})
+    assert [j["jobId"] for j in body["jobs"]] == ["1111111111"] and body["min_score"] == 45
+
+
+def test_remoteok_jobs_are_not_in_captured_list(aws, monkeypatch):
+    monkeypatch.setattr(aws.fetch, "http_get_json", lambda url, timeout=15: [
+        {"id": 7, "position": "DevOps Engineer", "company": "R", "description": LONG_DESC, "url": "https://remoteok.com/7"}])
+    aws.fetch.handler({}, None)
+    assert call(aws, {"action": "list"})[1]["jobs"] == []
+
+
+def test_export_returns_full_description_and_not_other_sources(aws):
+    aws.ingest.handler(event([job("1111111111")]), None)
+    status, body = call(aws, {"action": "export", "job_ids": ["1111111111", "5555555555"]})
+    assert status == 200 and len(body["jobs"]) == 1
+    assert body["jobs"][0]["description"].startswith("We are hiring") and body["jobs"][0]["score"] >= 45
+
+
+def test_delete_removes_from_list_and_table(aws):
+    aws.ingest.handler(event([job("1111111111"), job("2222222222")]), None)
+    assert call(aws, {"action": "delete", "job_ids": ["1111111111"]}) == (200, {"deleted": 1})
+    assert [j["jobId"] for j in call(aws, {"action": "list"})[1]["jobs"]] == ["2222222222"]
+    assert call(aws, {"action": "export", "job_ids": ["1111111111"]})[1]["jobs"] == []
+
+
+def test_delete_cannot_touch_other_sources(aws):
+    item = aws.store.build_item(source="remoteok", ext_id="1111111111", title="DevOps", company="R",
+                                location="", description=LONG_DESC, url="u", similarity=0.2)
+    aws.store.put_new(item)
+    call(aws, {"action": "delete", "job_ids": ["1111111111"]})
+    assert "Item" in aws.store.TABLE.get_item(Key={"job_id": "remoteok#1111111111"})
+
+
+def test_api_validation(aws):
+    assert call(aws, {"action": "nope"})[0] == 400
+    assert call(aws, {"action": "delete", "job_ids": []})[0] == 400
+    assert call(aws, {"action": "delete", "job_ids": ["abc"]})[0] == 400
+    assert call(aws, {"action": "export"})[0] == 400
+    assert aws.ingest.handler({"headers": {"x-job-radar-key": "bad"}, "body": json.dumps({"action": "list"})}, None)["statusCode"] == 401

@@ -19,6 +19,16 @@ data "aws_iam_policy_document" "ingest" {
     resources = [aws_dynamodb_table.jobs.arn]
   }
   statement {
+    sid       = "ListCapturedJobs"
+    actions   = ["dynamodb:Query"]
+    resources = ["${aws_dynamodb_table.jobs.arn}/index/captured-index"]
+  }
+  statement {
+    sid       = "ExportAndDeleteCapturedJobs"
+    actions   = ["dynamodb:BatchGetItem", "dynamodb:DeleteItem"]
+    resources = [aws_dynamodb_table.jobs.arn]
+  }
+  statement {
     sid       = "ReadSharedSecret"
     actions   = ["ssm:GetParameter"]
     resources = ["${local.ssm_arn_prefix}${local.ingest_secret_param}"]

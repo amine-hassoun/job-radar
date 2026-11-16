@@ -1,19 +1,26 @@
-const out = document.getElementById('out');
-const toggle = document.getElementById('record');
-const statsEl = document.getElementById('stats');
+const $ = (id) => document.getElementById(id);
+const out = $('out');
+const msg = $('msg');
+let listed = []; // jobs currently shown (summaries, no descriptions)
 
-function renderStats(stats = { stored: 0, duplicates: 0, errors: 0 }) {
-  statsEl.textContent = `Saved ${stats.stored} · already had ${stats.duplicates} · errors ${stats.errors}`;
+const api = (body) => chrome.runtime.sendMessage({ type: 'JOB_RADAR_API', body });
+
+function note(text) {
+  msg.textContent = text;
 }
 
+// ---- record mode + stats ----
+function renderStats(stats = { stored: 0, duplicates: 0, errors: 0 }) {
+  $('stats').textContent = `Saved ${stats.stored} · already had ${stats.duplicates} · errors ${stats.errors}`;
+}
 chrome.storage.local.get(['recordMode', 'stats']).then(({ recordMode, stats }) => {
-  toggle.checked = !!recordMode;
+  $('record').checked = !!recordMode;
   renderStats(stats);
 });
-
-toggle.addEventListener('change', () => chrome.storage.local.set({ recordMode: toggle.checked }));
+$('record').addEventListener('change', () => chrome.storage.local.set({ recordMode: $('record').checked }));
 chrome.storage.onChanged.addListener((changes) => changes.stats && renderStats(changes.stats.newValue));
 
+// ---- capture the current job ----
 function summarize({ status, body, error }) {
   if (status === 0) return `❌ Network error: ${error}`;
   if (status === 401) return '❌ Server rejected the key (check config.js)';
@@ -23,10 +30,9 @@ function summarize({ status, body, error }) {
   return '⚠️ Server rejected the posting (failed validation)';
 }
 
-document.getElementById('capture').addEventListener('click', async () => {
+$('capture').addEventListener('click', async () => {
   out.textContent = 'Capturing…';
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
   let res;
   try {
     res = await chrome.tabs.sendMessage(tab.id, { type: 'JOB_RADAR_CAPTURE' });
@@ -38,8 +44,119 @@ document.getElementById('capture').addEventListener('click', async () => {
     out.textContent = `❌ ${res.error}`;
     return;
   }
-
-  out.textContent = `Sending "${res.job.title}"…`;
   const result = await chrome.runtime.sendMessage({ type: 'JOB_RADAR_SEND', job: res.job });
-  out.textContent = `${summarize(result)}\n${res.job.title} — ${res.job.company}\njobId ${res.job.jobId}`;
+  out.textContent = `${summarize(result)}\n${res.job.title} — ${res.job.company}`;
+  loadList();
 });
+
+// ---- list of captured jobs ----
+const checkedIds = () => [...document.querySelectorAll('#jobs input[type=checkbox]:checked')].map((c) => c.value);
+
+function render(jobs) {
+  listed = jobs;
+  const box = $('jobs');
+  box.replaceChildren(); // textContent/DOM APIs only: job titles come from the web and must never be parsed as HTML
+  $('all').checked = false;
+  $('count').textContent = `${jobs.length} job${jobs.length === 1 ? '' : 's'}`;
+  if (!jobs.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = $('fits').checked ? 'No captured job fits your profile yet.' : 'Nothing captured yet.';
+    box.appendChild(empty);
+    return;
+  }
+  for (const job of jobs) {
+    const row = document.createElement('label');
+    row.className = 'job';
+
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.value = job.jobId;
+
+    const score = document.createElement('span');
+    score.className = 'score';
+    score.textContent = job.score;
+
+    const text = document.createElement('div');
+    const title = document.createElement('a');
+    title.href = job.url;
+    title.target = '_blank';
+    title.rel = 'noreferrer';
+    title.textContent = `${job.title} — ${job.company}`;
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = [job.location, (job.matched || []).slice(0, 5).join(', ')].filter(Boolean).join(' · ');
+    text.append(title, meta);
+    if (job.flags?.length) {
+      const flags = document.createElement('div');
+      flags.className = 'meta flag';
+      flags.textContent = `⚠ ${job.flags.join(', ')}`;
+      text.appendChild(flags);
+    }
+
+    row.append(check, score, text);
+    box.appendChild(row);
+  }
+}
+
+async function loadList() {
+  note('Loading…');
+  const res = await api({ action: 'list', only_fits: $('fits').checked });
+  if (res.status !== 200) {
+    note(res.status === 401 ? '❌ Server rejected the key (check config.js)' : `❌ Could not load (${res.status || res.error})`);
+    return;
+  }
+  render(res.body.jobs);
+  note('');
+}
+
+$('fits').addEventListener('change', loadList);
+$('all').addEventListener('change', () => {
+  document.querySelectorAll('#jobs input[type=checkbox]').forEach((c) => (c.checked = $('all').checked));
+});
+
+// ---- copy for Claude ----
+function toPrompt(jobs) {
+  const head = `Write a tailored cover letter for each of the ${jobs.length} job(s) below (job-radar captures, best fit first).\n\n`;
+  const blocks = jobs.map((j, i) =>
+    [
+      `## ${i + 1}. ${j.title} — ${j.company}`,
+      `Location: ${j.location || 'n/a'} | Fit score: ${j.score}/100 | Matched: ${(j.matched || []).join(', ') || '-'}`,
+      j.flags?.length ? `Flags: ${j.flags.join(', ')}` : null,
+      `URL: ${j.url}`,
+      '',
+      (j.description || '').trim(),
+    ]
+      .filter((line) => line !== null)
+      .join('\n')
+  );
+  return head + blocks.join('\n\n---\n\n');
+}
+
+$('copy').addEventListener('click', async () => {
+  const ids = checkedIds().length ? checkedIds() : listed.map((j) => j.jobId);
+  if (!ids.length) return note('Nothing to copy.');
+  note(`Fetching ${ids.length} description(s)…`);
+  const jobs = [];
+  for (let i = 0; i < ids.length; i += 100) {
+    const res = await api({ action: 'export', job_ids: ids.slice(i, i + 100) });
+    if (res.status !== 200) return note(`❌ Export failed (${res.status || res.error})`);
+    jobs.push(...res.body.jobs);
+  }
+  const text = toPrompt(jobs);
+  await navigator.clipboard.writeText(text);
+  note(`✅ Copied ${jobs.length} job(s), ${text.length.toLocaleString()} characters. Paste into Claude.`);
+});
+
+// ---- delete after applying ----
+$('del').addEventListener('click', async () => {
+  const ids = checkedIds();
+  if (!ids.length) return note('Check the jobs you applied to first.');
+  if (!confirm(`Delete ${ids.length} job(s) from storage? Use this after you've applied. It can't be undone.`)) return;
+  const res = await chrome.runtime.sendMessage({ type: 'JOB_RADAR_DELETE', ids });
+  if (res.status !== 200) return note(`❌ Delete failed (${res.status || res.error})`);
+  await loadList();
+  note(`🗑 Deleted ${res.body.deleted} job(s).`);
+});
+
+loadList();

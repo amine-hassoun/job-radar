@@ -18,11 +18,11 @@ EventBridge 05:30 UTC ─▶ digest ◀── Query (unsent, score ≥ 45) ◀�
 
 | Piece | Where | Notes |
 |---|---|---|
-| Capture | `extension/` | Manifest V3. Record mode auto-captures only postings I open; it never navigates or scrolls. A service worker does the network call. |
-| Ingest | `infra/lambda/src/ingest.py` | Constant-time secret check, validation, scoring, conditional write (no duplicates). |
+| Capture | `extension/` | Manifest V3. A **Capture** button is injected next to Save on each posting (turns into **✓ Captured**; **✓ Applied** once deleted). Record mode auto-captures only postings I open; it never navigates or scrolls. A service worker does the network calls. The popup lists captured jobs that fit my profile, copies them with full descriptions for cover-letter writing, and deletes the ones I applied to. |
+| Ingest / API | `infra/lambda/src/ingest.py` | One Function URL, constant-time secret check. Without `action`: validate, score, conditional write (no duplicates). With `action`: `list` (captured jobs, optional fits-only), `export` (full descriptions), `delete` (captured jobs only; keys are built server-side). |
 | Fetch | `infra/lambda/src/fetch.py` | RemoteOK API (remote jobs worldwide). Failure raises, which trips the Errors alarm and emails me. |
 | Score | `infra/lambda/src/scoring.py` | Title rules + weighted skills + TF-IDF cosine + remote/location bonus, minus eligibility and seniority wording. Config in `profile.json`. |
-| Digest | `infra/lambda/src/digest.py` | Reads a sparse index (`digest_pk = PENDING`), publishes, then marks jobs notified. |
+| Digest | `infra/lambda/src/digest.py` | Reads a sparse indexes (`digest_pk = PENDING`, `captured_pk = CAPTURED`), publishes, then marks jobs notified. |
 
 ## Scoring (0-100)
 
@@ -36,6 +36,29 @@ EventBridge 05:30 UTC ─▶ digest ◀── Query (unsent, score ≥ 45) ◀�
 | Principal/staff/10+ years wording | -10, flagged `senior-wording` |
 
 Deterministic and explainable: every score lists the skills that matched. Tune `profile.json`, not code.
+
+## Using it
+
+1. Browse LinkedIn jobs. Click **Capture** on a posting (or turn on record mode).
+2. Popup → **Captured jobs** (default: only profile fits, score ≥ 45) → check some → **Copy for Claude** → paste into a chat for cover letters.
+3. After applying, check those jobs → **Delete checked (applied)**. They leave storage, and record mode will not re-capture them in this browser.
+
+RemoteOK matches arrive in the daily email (title, score, matched skills, link). For their descriptions, to paste into Claude:
+
+```bash
+source ~/.venvs/jr/bin/activate
+python3 scripts/export_remoteok.py --out matches.md      # best matches of the last 7 days, then attach matches.md in the chat
+```
+
+They expire on their own after 30 days (TTL).
+
+## Reset (start from zero)
+
+```bash
+python3 scripts/reset_data.py          # shows what is stored, asks you to type DELETE
+```
+Then clear the extension's local cache: `chrome://extensions` → Job Radar Capture → *service worker* → Console:
+`chrome.storage.local.clear(); chrome.action.setBadgeText({text: ''})`. The next fetch (04:00 UTC, or invoke `job-radar-fetch`) refills RemoteOK.
 
 ## Setup
 
@@ -69,14 +92,15 @@ aws lambda invoke --function-name job-radar-digest /dev/stdout
 ## Development
 
 ```bash
-pip install boto3 "moto[dynamodb,ssm,sns]" pytest && pytest tests -q
+pip install boto3 "moto[dynamodb,ssm,sns]" pytest && pytest tests -q          # 19 tests: scoring, ingest, fetch, digest, list/export/delete, scripts
 ```
 
 CI (`.github/workflows/checks.yml`) runs the cost guard, `terraform fmt/validate`, the tests and checkov. Listings from RemoteOK link back to their original pages, as their terms require.
 
 ## Lessons learned
 
-- A sparse GSI beats a Scan on tiny provisioned throughput: the digest reads only unsent matches.
+- A sparse GSI beats a Scan on tiny provisioned throughput: the digest and the extension's job list read only the items they need.
+- DOM-injected buttons break when the host page changes: copy the page's own button classes, never attach to list cards, and keep a floating fallback.
 - Scheduled jobs must fail loudly: a failed fetch raises, the Errors alarm emails.
 - Dropped Adzuna: it needed an API key and only added EU on-site listings; LinkedIn capture covers those.
 - Content scripts can't call arbitrary origins; the extension's service worker owns the network.

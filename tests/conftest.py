@@ -31,6 +31,7 @@ def aws():
             AttributeDefinitions=[
                 {"AttributeName": "job_id", "AttributeType": "S"},
                 {"AttributeName": "digest_pk", "AttributeType": "S"},
+                {"AttributeName": "captured_pk", "AttributeType": "S"},
                 {"AttributeName": "score", "AttributeType": "N"},
             ],
             KeySchema=[{"AttributeName": "job_id", "KeyType": "HASH"}],
@@ -42,6 +43,14 @@ def aws():
                 ],
                 "Projection": {"ProjectionType": "INCLUDE",
                                "NonKeyAttributes": ["title", "company", "location", "url", "source", "matched", "flags"]},
+            }, {
+                "IndexName": "captured-index",
+                "KeySchema": [
+                    {"AttributeName": "captured_pk", "KeyType": "HASH"},
+                    {"AttributeName": "score", "KeyType": "RANGE"},
+                ],
+                "Projection": {"ProjectionType": "INCLUDE",
+                               "NonKeyAttributes": ["title", "company", "location", "url", "source", "matched", "flags", "ingested_at"]},
             }],
             BillingMode="PAY_PER_REQUEST",  # moto only; real table is PROVISIONED (see database.tf)
         )

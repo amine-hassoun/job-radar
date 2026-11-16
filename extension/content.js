@@ -1,4 +1,5 @@
-console.log('[job-radar] content script loaded', window.location.href);
+const JR_VERSION = '0.3.3';
+console.log(`[job-radar] content script loaded v${JR_VERSION}`, window.location.href);
 
 const SELECTORS = {
   title: [
@@ -53,11 +54,57 @@ function getJobId() {
   );
 }
 
+// LinkedIn's newer layout has no h1, no #job-details and obfuscated class names, so we also locate
+// things by structure: the detail pane is the ancestor of the Save button that holds "About the job".
+const BTN_ID = 'job-radar-btn';
+const HOST_ID = 'job-radar-host';
+const SAVE_RE = /^(save|saved|unsave|enregistrer|enregistré|ne plus enregistrer)\b/i;
+const META_RE = /\b(ago|applicants?|clicked apply|hours?|days?|weeks?|months?|minutes?|il y a|candidat)/i;
+const isSaveButton = (b) => b.id !== BTN_ID && SAVE_RE.test((b.getAttribute('aria-label') || b.innerText || '').trim());
+
+// Save buttons inside <li> belong to the results list cards, never to the detail pane.
+const findSaveButton = () => [...document.querySelectorAll('button')].find((b) => isSaveButton(b) && !b.closest('li')) || null;
+
+function findPane() {
+  const save = findSaveButton();
+  if (!save) return null;
+  const hasHeading = (node) =>
+    [...node.querySelectorAll('h2, h3, span, p')].some((e) => /^about the job$/i.test(e.textContent.trim()));
+  let node = save.parentElement;
+  while (node && node !== document.body && !hasHeading(node)) node = node.parentElement;
+  return node && node !== document.body ? node : null;
+}
+
+function structural() {
+  const jobId = getJobId();
+  const root = findPane() || document;
+  const titleLink =
+    (jobId && root.querySelector(`a[href*="/jobs/view/${jobId}"]`)) || root.querySelector('a[href*="/jobs/view/"]');
+  const companyLink = [...root.querySelectorAll('a[href*="/company/"]')].find((a) => a.innerText?.trim());
+  let place = null;
+  if (titleLink) {
+    // The first <p> after the title that has several spans, one of them like "4 days ago" / "48 applicants".
+    const meta = [...root.querySelectorAll('p')].find(
+      (p) =>
+        titleLink.compareDocumentPosition(p) & Node.DOCUMENT_POSITION_FOLLOWING &&
+        p.querySelectorAll('span').length >= 2 &&
+        [...p.querySelectorAll('span')].some((sp) => META_RE.test(sp.textContent))
+    );
+    place = meta?.querySelector('span')?.innerText?.trim() || null;
+  }
+  return {
+    title: titleLink?.innerText?.trim() || null,
+    company: companyLink?.innerText?.trim() || null,
+    place,
+  };
+}
+
 function capture() {
   const jobId = getJobId();
-  const title = firstText(SELECTORS.title);
-  const company = firstText(SELECTORS.company);
-  const place = firstText(SELECTORS.place)?.split('·')[0].trim() || null;
+  const fallback = structural();
+  const title = firstText(SELECTORS.title) || fallback.title;
+  const company = firstText(SELECTORS.company) || fallback.company;
+  const place = (firstText(SELECTORS.place)?.split('·')[0].trim()) || fallback.place || null;
   const description = (firstText(SELECTORS.description) || descriptionByHeading())
     ?.replace(/^about the job\s*/i, '');
 
@@ -104,6 +151,11 @@ async function recordTick() {
 
     const jobId = getJobId();
     if (!jobId || sentJobIds.has(jobId)) return;
+    const { captured = {}, deleted = {} } = await chrome.storage.local.get(['captured', 'deleted']);
+    if (jobId in captured || jobId in deleted) {
+      sentJobIds.add(jobId);
+      return;
+    }
     if (jobId !== attemptedJobId) {
       attemptedJobId = jobId;
       attempts = 0;
@@ -126,3 +178,136 @@ async function recordTick() {
 }
 
 setInterval(recordTick, 2000);
+
+// ---- Capture button: injected next to Save in the job detail pane ----
+const LABELS = {
+  idle: 'Capture',
+  busy: 'Capturing…',
+  captured: '✓ Captured',
+  applied: '✓ Applied',
+  error: 'Retry capture',
+};
+
+// The Apply/Save row is LinkedIn's flex layout: adding a child squeezes the buttons, so we never touch it.
+// Our button gets its own line right below the row. If Save sits alone in a wrapper, the row is the wrapper's parent.
+const insertionPoint = (anchor) => (anchor.parentElement && anchor.parentElement.children.length === 1 ? anchor.parentElement : anchor);
+const rowOf = (anchor) => insertionPoint(anchor).parentElement;
+
+function makeHost(btn, anchored) {
+  const host = document.createElement('div');
+  host.id = HOST_ID;
+  if (anchored) Object.assign(host.style, { display: 'flex', marginTop: '8px' }); // block-level: natural-width button, own line
+  else Object.assign(host.style, { position: 'fixed', right: '24px', bottom: '90px', zIndex: 9999 });
+  host.appendChild(btn);
+  return host;
+}
+
+function setBtn(btn, state, detail) {
+  btn.dataset.state = state;
+  (btn.__label || btn).textContent = LABELS[state];
+  btn.setAttribute('aria-label', LABELS[state]);
+  btn.disabled = state === 'busy' || state === 'captured' || state === 'applied';
+  btn.title =
+    state === 'captured' ? `Stored. Fit score ${detail ?? '?'}/100` :
+    state === 'applied' ? 'Deleted from storage after applying' :
+    state === 'error' ? detail || 'Capture failed' : '';
+}
+
+function makeBtn(anchor) {
+  let btn;
+  if (anchor) {
+    // Clone LinkedIn's own Save button so classes, fonts and colours match in any theme. cloneNode copies
+    // no event listeners; strip ids and tracking attributes so LinkedIn's delegated handlers ignore it.
+    btn = anchor.cloneNode(true);
+    for (const attr of [...btn.attributes]) {
+      if (attr.name.startsWith('data-') || ['id', 'aria-pressed', 'aria-describedby', 'aria-labelledby'].includes(attr.name)) {
+        btn.removeAttribute(attr.name);
+      }
+    }
+    btn.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
+    btn.querySelectorAll('svg, img').forEach((n) => n.remove());
+    btn.__label = [...btn.querySelectorAll('*')].find((e) => !e.children.length && e.textContent.trim()) || null;
+    btn.style.flex = '0 0 auto';
+  } else {
+    btn = document.createElement('button');
+    // Fallback when LinkedIn's markup changes: a floating button (above the messaging dock) that always works.
+    Object.assign(btn.style, {
+      padding: '10px 18px',
+      borderRadius: '999px', border: '1px solid #1A3C5E', background: '#1A3C5E', color: '#fff',
+      font: '600 14px system-ui', cursor: 'pointer',
+    });
+  }
+  btn.id = BTN_ID;
+  btn.type = 'button';
+  btn.addEventListener('click', async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (btn.dataset.state !== 'idle' && btn.dataset.state !== 'error') return;
+    setBtn(btn, 'busy');
+    const result = capture();
+    if (!result.ok) return setBtn(btn, 'error', result.error);
+    try {
+      const res = await chrome.runtime.sendMessage({ type: 'JOB_RADAR_SEND', job: result.job });
+      const done = res.status === 200 && (res.body.stored || res.body.duplicates);
+      if (done) setBtn(btn, 'captured', res.body.scores?.[0]);
+      else setBtn(btn, 'error', res.status === 401 ? 'Server rejected the key (check config.js)' : `Failed (${res.status || res.error})`);
+    } catch (err) {
+      setBtn(btn, 'error', err.message);
+    }
+  });
+  return btn;
+}
+
+let lastMode = null;
+function logMode(mode) {
+  if (mode !== lastMode) {
+    lastMode = mode;
+    console.info(`[job-radar] button: ${mode}`);
+  }
+}
+
+async function uiTick() {
+  try {
+    const jobId = getJobId();
+    let host = document.getElementById(HOST_ID);
+    if (!jobId) {
+      host?.remove();
+      logMode('no currentJobId in the URL, nothing to show');
+      return;
+    }
+    const anchor = findSaveButton();
+    const row = anchor ? rowOf(anchor) : null;
+    const wantFloating = !row;
+    logMode(row ? 'own line below the Apply/Save row' : 'floating (Save button not found)');
+    if (host && (host.dataset.floating === '1') !== wantFloating) {
+      host.remove(); // layout changed, rebuild
+      host = null;
+    }
+    if (!host || !host.querySelector('button') || (row && row.nextElementSibling !== host)) {
+      host?.remove();
+      const fresh = makeBtn(anchor);
+      host = makeHost(fresh, !wantFloating);
+      host.dataset.floating = wantFloating ? '1' : '0';
+      setBtn(fresh, 'idle');
+      if (row) row.insertAdjacentElement('afterend', host);
+      else document.body.appendChild(host);
+    }
+    const btn = host.querySelector('button');
+    if (btn.dataset.state === 'busy') return;
+
+    const { captured = {}, deleted = {} } = await chrome.storage.local.get(['captured', 'deleted']);
+    if (jobId in deleted) setBtn(btn, 'applied');
+    else if (jobId in captured) setBtn(btn, 'captured', captured[jobId]);
+    else if (btn.dataset.state !== 'error' || btn.dataset.job !== jobId) setBtn(btn, 'idle');
+    btn.dataset.job = jobId;
+  } catch (err) {
+    console.warn('[job-radar] button error:', err.message);
+  }
+}
+
+setInterval(uiTick, 1000);
+
+// Refresh the local mirror of server state at most every 10 minutes per page load.
+chrome.storage.local.get('lastSync').then(({ lastSync = 0 }) => {
+  if (Date.now() - lastSync > 10 * 60 * 1000) chrome.runtime.sendMessage({ type: 'JOB_RADAR_SYNC' }).catch(() => {});
+});

@@ -3,17 +3,44 @@
   <head>
     <meta charset="utf-8" />
     <style>
-      body { width: 320px; font: 13px system-ui; margin: 12px; }
-      button { width: 100%; padding: 8px; cursor: pointer; }
-      label { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
-      pre { white-space: pre-wrap; max-height: 220px; overflow: auto; }
-      #stats { color: #555; margin-top: 8px; }
+      body { width: 400px; font: 13px system-ui; margin: 12px; }
+      button { padding: 7px 10px; cursor: pointer; }
+      .full { width: 100%; }
+      .row { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin: 8px 0; }
+      label { display: flex; gap: 6px; align-items: center; }
+      pre { white-space: pre-wrap; max-height: 90px; overflow: auto; margin: 6px 0; }
+      hr { border: 0; border-top: 1px solid #ccc; margin: 12px 0; }
+      #jobs { max-height: 260px; overflow: auto; border: 1px solid #ccc; border-radius: 6px; }
+      .job { display: flex; gap: 8px; padding: 6px 8px; border-bottom: 1px solid #eee; align-items: flex-start; }
+      .job:last-child { border-bottom: 0; }
+      .score { min-width: 28px; font-weight: 700; color: #1A3C5E; }
+      .meta { color: #555; font-size: 12px; }
+      .flag { color: #B3261E; }
+      .empty { padding: 12px; color: #555; }
+      .danger { color: #B3261E; }
+      #stats, #msg { color: #555; margin-top: 6px; }
     </style>
   </head>
   <body>
     <label><input type="checkbox" id="record" /> Record mode (auto-capture jobs I open)</label>
-    <button id="capture">Capture this job now</button>
+    <button id="capture" class="full" style="margin-top: 8px">Capture this job now</button>
     <pre id="out"></pre>
+
+    <hr />
+    <div class="row">
+      <strong>Captured jobs</strong>
+      <label><input type="checkbox" id="fits" checked /> only profile fits</label>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="all" /> select all</label>
+      <span id="count"></span>
+    </div>
+    <div id="jobs"></div>
+    <div class="row">
+      <button id="copy" title="Copies the checked jobs (or all listed if none are checked) with full descriptions">Copy for Claude</button>
+      <button id="del" class="danger" title="Deletes the checked jobs from storage. Use after you've applied.">Delete checked (applied)</button>
+    </div>
+    <div id="msg"></div>
     <div id="stats"></div>
     <script src="popup.js"></script>
   </body>

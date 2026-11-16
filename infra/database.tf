@@ -1,5 +1,5 @@
 # PROVISIONED on purpose: DynamoDB's 25 WCU / 25 RCU Always Free allowance is ONE pool shared
-# by every table in the account/region. This project uses 3 RCU / 5 WCU (table 2/4 + index 1/1).
+# by every table in the account/region. This project uses 4 RCU / 6 WCU (table 2/4 + two indexes at 1/1).
 resource "aws_dynamodb_table" "jobs" {
   name           = "job-radar-jobs"
   billing_mode   = "PROVISIONED"
@@ -19,6 +19,11 @@ resource "aws_dynamodb_table" "jobs" {
   }
 
   attribute {
+    name = "captured_pk"
+    type = "S"
+  }
+
+  attribute {
     name = "score"
     type = "N"
   }
@@ -32,6 +37,19 @@ resource "aws_dynamodb_table" "jobs" {
     range_key          = "score"
     projection_type    = "INCLUDE"
     non_key_attributes = ["title", "company", "location", "url", "source", "matched", "flags"]
+    read_capacity      = 1
+    write_capacity     = 1
+  }
+
+  # Second sparse index: only jobs captured from LinkedIn (captured_pk = "CAPTURED"), sorted by score.
+  # Powers the extension's list / "Captured" button state; the item disappears from it when deleted.
+  # Small projection on purpose: descriptions are fetched on demand with BatchGetItem.
+  global_secondary_index {
+    name               = "captured-index"
+    hash_key           = "captured_pk"
+    range_key          = "score"
+    projection_type    = "INCLUDE"
+    non_key_attributes = ["title", "company", "location", "url", "source", "matched", "flags", "ingested_at"]
     read_capacity      = 1
     write_capacity     = 1
   }
