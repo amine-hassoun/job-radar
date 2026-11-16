@@ -37,7 +37,7 @@ async function sendJob(job) {
 }
 
 async function sync() {
-  const result = await post({ action: 'list' });
+  const result = await post({ action: 'list', source: 'linkedin-extension' });
   if (result.status === 200) {
     const captured = {};
     for (const job of result.body.jobs) captured[job.jobId] = job.score;
@@ -46,9 +46,10 @@ async function sync() {
   return result;
 }
 
-async function deleteJobs(ids) {
-  const result = await post({ action: 'delete', job_ids: ids });
-  if (result.status === 200) {
+async function deleteJobs(ids, source = 'linkedin-extension') {
+  const result = await post({ action: 'delete', job_ids: ids, source });
+  // The local mirror only tracks LinkedIn captures; RemoteOK deletions are remembered server-side (tombstone).
+  if (result.status === 200 && source === 'linkedin-extension') {
     const { captured = {}, deleted = {} } = await chrome.storage.local.get(['captured', 'deleted']);
     for (const id of ids) {
       delete captured[id];
@@ -63,7 +64,7 @@ const HANDLERS = {
   JOB_RADAR_SEND: (msg) => sendJob(msg.job),
   JOB_RADAR_API: (msg) => post(msg.body), // list / export, read-only
   JOB_RADAR_SYNC: () => sync(),
-  JOB_RADAR_DELETE: (msg) => deleteJobs(msg.ids),
+  JOB_RADAR_DELETE: (msg) => deleteJobs(msg.ids, msg.source),
 };
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {

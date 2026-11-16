@@ -18,8 +18,8 @@ EventBridge 05:30 UTC ─▶ digest ◀── Query (unsent, score ≥ 45) ◀�
 
 | Piece | Where | Notes |
 |---|---|---|
-| Capture | `extension/` | Manifest V3. A **Capture** button is injected next to Save on each posting (turns into **✓ Captured**; **✓ Applied** once deleted). Record mode auto-captures only postings I open; it never navigates or scrolls. A service worker does the network calls. The popup lists captured jobs that fit my profile, copies them with full descriptions for cover-letter writing, and deletes the ones I applied to. |
-| Ingest / API | `infra/lambda/src/ingest.py` | One Function URL, constant-time secret check. Without `action`: validate, score, conditional write (no duplicates). With `action`: `list` (captured jobs, optional fits-only), `export` (full descriptions), `delete` (captured jobs only; keys are built server-side). |
+| Capture | `extension/` | Manifest V3. A **Capture** button is injected next to Save on each posting (turns into **✓ Captured**; **✓ Applied** once deleted). Record mode auto-captures only postings I open; it never navigates or scrolls. A service worker does the network calls. The popup has two tabs, **LinkedIn captures** and **RemoteOK matches**: each lists jobs that fit my profile, copies them with full descriptions for cover-letter writing, and removes the ones I applied to. |
+| Ingest / API | `infra/lambda/src/ingest.py` | One Function URL, constant-time secret check. Without `action`: validate, score, conditional write (no duplicates). With `action` + `source` (`linkedin-extension` default, or `remoteok`): `list` (optional fits-only), `export` (full descriptions), `delete`. Keys are built server-side from a whitelisted source. LinkedIn deletes are real; RemoteOK deletes keep a 60-day tombstone (no description, no list entry) so the daily fetch can't re-add the listing. |
 | Fetch | `infra/lambda/src/fetch.py` | RemoteOK API (remote jobs worldwide). Failure raises, which trips the Errors alarm and emails me. |
 | Score | `infra/lambda/src/scoring.py` | Title rules + weighted skills + TF-IDF cosine + remote/location bonus, minus eligibility and seniority wording. Config in `profile.json`. |
 | Digest | `infra/lambda/src/digest.py` | Reads a sparse indexes (`digest_pk = PENDING`, `captured_pk = CAPTURED`), publishes, then marks jobs notified. |
@@ -39,18 +39,12 @@ Deterministic and explainable: every score lists the skills that matched. Tune `
 
 ## Using it
 
-1. Browse LinkedIn jobs. Click **Capture** on a posting (or turn on record mode).
-2. Popup → **Captured jobs** (default: only profile fits, score ≥ 45) → check some → **Copy for Claude** → paste into a chat for cover letters.
-3. After applying, check those jobs → **Delete checked (applied)**. They leave storage, and record mode will not re-capture them in this browser.
+1. **LinkedIn:** browse jobs and click **Capture** on a posting (or turn on record mode).
+2. **RemoteOK:** the daily fetch fills the **RemoteOK matches** tab; the digest email links the best new ones.
+3. Popup → pick a tab (default view: only profile fits, score ≥ 45) → check some jobs → **Copy for Claude** → paste into a chat for cover letters.
+4. After applying, check those jobs → **Delete checked (applied)**. LinkedIn jobs leave storage and record mode won't re-capture them in this browser; RemoteOK jobs lose their description and never come back in the fetch.
 
-RemoteOK matches arrive in the daily email (title, score, matched skills, link). For their descriptions, to paste into Claude:
-
-```bash
-source ~/.venvs/jr/bin/activate
-python3 scripts/export_remoteok.py --out matches.md      # best matches of the last 7 days, then attach matches.md in the chat
-```
-
-They expire on their own after 30 days (TTL).
+`scripts/export_remoteok.py --out matches.md` does the RemoteOK export from the terminal, if you prefer a file to attach.
 
 ## Reset (start from zero)
 
@@ -92,7 +86,7 @@ aws lambda invoke --function-name job-radar-digest /dev/stdout
 ## Development
 
 ```bash
-pip install boto3 "moto[dynamodb,ssm,sns]" pytest && pytest tests -q          # 19 tests: scoring, ingest, fetch, digest, list/export/delete, scripts
+pip install boto3 "moto[dynamodb,ssm,sns]" pytest && pytest tests -q          # 23 tests: scoring, ingest, fetch, digest, list/export/delete for both sources, scripts
 ```
 
 CI (`.github/workflows/checks.yml`) runs the cost guard, `terraform fmt/validate`, the tests and checkov. Listings from RemoteOK link back to their original pages, as their terms require.

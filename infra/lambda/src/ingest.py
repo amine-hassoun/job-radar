@@ -1,12 +1,15 @@
 """The extension's API behind one Function URL (shared-secret auth).
 
-Body without "action": ingest {"jobs": [...]}.  With "action": list | export | delete (captured jobs only).
+Body without "action": ingest {"jobs": [...]}.  With "action": list | export | delete, for one "source"
+(linkedin-extension by default, or remoteok).
 """
 import base64
 import hmac
 import json
 import os
 import re
+import time
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import boto3
@@ -69,7 +72,6 @@ def to_item(job):
         description=description,
         url=f"https://www.linkedin.com/jobs/view/{job_id}/",
         similarity=scoring.similarities([description])[0],
-        captured=True,
         description_max=DESCRIPTION_MAX,
     )
 
@@ -82,6 +84,12 @@ def parse_body(event):
     if not isinstance(body, dict):
         raise ValueError("body must be an object")
     return body
+
+
+def source_of(body):
+    """The requested source if known, else None. Defaults to the LinkedIn captures."""
+    source = body.get("source", SOURCE)
+    return source if source in store.SOURCE_PARTITIONS else None
 
 
 def job_ids(body):
@@ -121,10 +129,13 @@ def ingest_jobs(body):
 
 def api_list(body):
     """Captured jobs, best score first. Reads the sparse index (small projection): cheap on 1 RCU."""
+    source = source_of(body)
+    if source is None:
+        return reply(400, {"error": f"unknown source; use one of {sorted(store.SOURCE_PARTITIONS)}"})
     min_score = scoring.PROFILE["digest_min_score"] if body.get("only_fits") else 0
     resp = store.TABLE.query(
         IndexName=CAPTURED_INDEX,
-        KeyConditionExpression=Key("captured_pk").eq(store.CAPTURED) & Key("score").gte(min_score),
+        KeyConditionExpression=Key("captured_pk").eq(store.SOURCE_PARTITIONS[source]) & Key("score").gte(min_score),
         ScanIndexForward=False,
         Limit=200,
     )
@@ -142,15 +153,15 @@ def api_list(body):
         }
         for it in resp["Items"]
     ]
-    return reply(200, {"jobs": jobs, "min_score": min_score})
+    return reply(200, {"jobs": jobs, "min_score": min_score, "source": source})
 
 
 def api_export(body):
     """Full records (with descriptions) for the chosen ids, to paste into Claude."""
-    ids = job_ids(body)
-    if ids is None:
-        return reply(400, {"error": 'expected {"job_ids": [1-100 numeric ids]}'})
-    request = {store.TABLE.name: {"Keys": [{"job_id": f"{SOURCE}#{i}"} for i in ids]}}
+    source, ids = source_of(body), job_ids(body)
+    if source is None or ids is None:
+        return reply(400, {"error": 'expected {"job_ids": [1-100 numeric ids], "source": optional}'})
+    request = {store.TABLE.name: {"Keys": [{"job_id": f"{source}#{i}"} for i in ids]}}
     items = []
     for _ in range(5):  # BatchGetItem may return UnprocessedKeys under throttling
         resp = store.DDB.batch_get_item(RequestItems=request)
@@ -177,12 +188,33 @@ def api_export(body):
 
 
 def api_delete(body):
-    """Delete captured jobs by id. Keys are built server-side, so only linkedin-extension items can go."""
-    ids = job_ids(body)
-    if ids is None:
-        return reply(400, {"error": 'expected {"job_ids": [1-100 numeric ids]}'})
+    """Remove jobs I applied to. Keys are built server-side from a whitelisted source.
+
+    LinkedIn: real delete (the extension remembers deleted ids locally).
+    RemoteOK: the daily fetch would re-add a deleted listing, so keep a tiny tombstone instead: drop the
+    description and the list entries, mark applied_at, and keep the item for 60 days so the fetch sees a duplicate.
+    """
+    source, ids = source_of(body), job_ids(body)
+    if source is None or ids is None:
+        return reply(400, {"error": 'expected {"job_ids": [1-100 numeric ids], "source": optional}'})
     for i in ids:
-        store.TABLE.delete_item(Key={"job_id": f"{SOURCE}#{i}"})  # idempotent
+        key = {"job_id": f"{source}#{i}"}
+        if source == SOURCE:
+            store.TABLE.delete_item(Key=key)  # idempotent
+            continue
+        try:
+            store.TABLE.update_item(
+                Key=key,
+                ConditionExpression="attribute_exists(job_id)",  # never create an item for an unknown id
+                UpdateExpression="REMOVE description, captured_pk, digest_pk, matched, flags SET applied_at = :now, expires_at = :ttl",
+                ExpressionAttributeValues={
+                    ":now": datetime.now(timezone.utc).isoformat(),
+                    ":ttl": int(time.time()) + store.TOMBSTONE_TTL_SECONDS,
+                },
+            )
+        except ClientError as err:
+            if err.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                raise
     return reply(200, {"deleted": len(ids)})
 
 

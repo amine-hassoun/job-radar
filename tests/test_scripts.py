@@ -8,8 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
 def put(aws, source, ext_id, title, desc=LONG_DESC, similarity=0.2):
     item = aws.store.build_item(source=source, ext_id=ext_id, title=title, company="Co", location="Remote",
-                                description=desc, url=f"https://x/{ext_id}", similarity=similarity,
-                                captured=(source == "linkedin-extension"))
+                                description=desc, url=f"https://x/{ext_id}", similarity=similarity)
     assert aws.store.put_new(item)
 
 

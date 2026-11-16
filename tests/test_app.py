@@ -141,3 +141,44 @@ def test_api_validation(aws):
     assert call(aws, {"action": "delete", "job_ids": ["abc"]})[0] == 400
     assert call(aws, {"action": "export"})[0] == 400
     assert aws.ingest.handler({"headers": {"x-job-radar-key": "bad"}, "body": json.dumps({"action": "list"})}, None)["statusCode"] == 401
+
+
+# ---- RemoteOK tab: same API, source = remoteok ----
+def remoteok_feed(monkeypatch, aws, ids=(1000007, 1000008)):
+    jobs = [{"id": i, "position": "DevOps Engineer", "company": f"R{i}", "location": "Worldwide",
+             "description": LONG_DESC, "url": f"https://remoteok.com/remote-jobs/{i}"} for i in ids]
+    monkeypatch.setattr(aws.fetch, "http_get_json", lambda url, timeout=15: [{"legal": "notice"}] + jobs)
+
+
+def test_remoteok_list_export_and_isolation(aws, monkeypatch):
+    remoteok_feed(monkeypatch, aws)
+    aws.fetch.handler({}, None)
+    aws.ingest.handler(event([job("1111111111")]), None)
+    status, body = call(aws, {"action": "list", "source": "remoteok", "only_fits": True})
+    assert status == 200 and body["source"] == "remoteok" and sorted(j["jobId"] for j in body["jobs"]) == ["1000007", "1000008"]
+    assert [j["jobId"] for j in call(aws, {"action": "list"})[1]["jobs"]] == ["1111111111"]  # LinkedIn list unchanged
+    exported = call(aws, {"action": "export", "source": "remoteok", "job_ids": ["1000007"]})[1]["jobs"]
+    assert len(exported) == 1 and exported[0]["description"].startswith("We are hiring")
+    assert call(aws, {"action": "export", "job_ids": ["1000007"]})[1]["jobs"] == []  # default source is LinkedIn
+
+
+def test_remoteok_delete_leaves_tombstone_and_blocks_refetch(aws, monkeypatch):
+    remoteok_feed(monkeypatch, aws)
+    aws.fetch.handler({}, None)
+    assert call(aws, {"action": "delete", "source": "remoteok", "job_ids": ["1000007"]}) == (200, {"deleted": 1})
+    assert [j["jobId"] for j in call(aws, {"action": "list", "source": "remoteok"})[1]["jobs"]] == ["1000008"]
+    item = aws.store.TABLE.get_item(Key={"job_id": "remoteok#1000007"})["Item"]
+    assert "applied_at" in item and "description" not in item and "captured_pk" not in item and "digest_pk" not in item
+    out = aws.fetch.handler({}, None)
+    assert out["stored"] == 0 and out["duplicates"] == 2          # the deleted listing does not come back
+    assert [j["jobId"] for j in call(aws, {"action": "list", "source": "remoteok"})[1]["jobs"]] == ["1000008"]
+
+
+def test_remoteok_delete_unknown_id_creates_nothing(aws):
+    call(aws, {"action": "delete", "source": "remoteok", "job_ids": ["99999"]})
+    assert "Item" not in aws.store.TABLE.get_item(Key={"job_id": "remoteok#99999"})
+
+
+def test_unknown_source_rejected(aws):
+    for action in ("list", "export", "delete"):
+        assert call(aws, {"action": action, "source": "adzuna", "job_ids": ["12345"]})[0] == 400

@@ -16,11 +16,15 @@ TABLE = DDB.Table(os.environ["TABLE_NAME"])
 TTL_SECONDS = 30 * 24 * 3600
 DESCRIPTION_MAX = 4000  # keeps item size (and WCU per write) small
 PENDING = "PENDING"  # value of the sparse-index key: present only while a job awaits the digest
-CAPTURED = "CAPTURED"  # sparse-index key for jobs captured from LinkedIn, until I delete them after applying
+# captured-index partition per source (the index is sparse: only items with captured_pk appear in it).
+# LinkedIn items stay until I delete them; RemoteOK items are listed for the popup's RemoteOK tab.
+SOURCE_PARTITIONS = {"linkedin-extension": "CAPTURED", "remoteok": "REMOTEOK"}
+CAPTURED = SOURCE_PARTITIONS["linkedin-extension"]
+TOMBSTONE_TTL_SECONDS = 60 * 24 * 3600  # applied RemoteOK jobs keep a tiny marker so the daily fetch can't re-add them
 
 
 def build_item(*, source, ext_id, title, company, location, description, url, similarity,
-               remote_hint=False, captured=False, description_max=DESCRIPTION_MAX):
+               remote_hint=False, description_max=DESCRIPTION_MAX):
     result = scoring.score_job(title, description, location, similarity, remote_hint)
     item = {
         "job_id": f"{source}#{ext_id}",
@@ -37,8 +41,8 @@ def build_item(*, source, ext_id, title, company, location, description, url, si
     }
     if location:
         item["location"] = location
-    if captured:
-        item["captured_pk"] = CAPTURED
+    if source in SOURCE_PARTITIONS:
+        item["captured_pk"] = SOURCE_PARTITIONS[source]
     if result["score"] >= scoring.PROFILE["digest_min_score"]:
         item["digest_pk"] = PENDING
     return item

@@ -108,6 +108,20 @@ check "fetch ran without FunctionError" None "$FE"
 check "fetch reported no source errors" "[]" "$(jget '["errors"]' </tmp/jr_fetch.json)"
 N=$(jget '["fetched"]' </tmp/jr_fetch.json); [ "${N:-0}" -gt 0 ] && ok "fetched $N jobs from RemoteOK" || bad "fetched 0 jobs"
 
+section "7b. RemoteOK tab (list / export, separate from LinkedIn)"
+sleep 5   # GSI propagation is eventually consistent
+RO=$(api '{"action":"list","source":"remoteok"}')
+RN=$(echo "$RO" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)["jobs"]))' 2>/dev/null)
+[ "${RN:-0}" -gt 0 ] && ok "RemoteOK list returns $RN job(s)" || bad "RemoteOK list is empty" "run the fetch first, or no match scored above the store threshold"
+RID=$(echo "$RO" | python3 -c 'import sys,json;print(json.load(sys.stdin)["jobs"][0]["jobId"])' 2>/dev/null)
+if [ -n "$RID" ]; then
+  api "{\"action\":\"export\",\"source\":\"remoteok\",\"job_ids\":[\"$RID\"]}" | grep -q '"description": "' \
+    && ok "RemoteOK export returns the stored description" || bad "RemoteOK export has no description"
+  api '{"action":"list"}' | grep -q "\"jobId\": \"$RID\"" \
+    && bad "LinkedIn list wrongly contains a RemoteOK job" || ok "LinkedIn list does not contain RemoteOK jobs"
+fi
+check "unknown source -> 400" 400 "$(code -X POST "$URL" -H "x-job-radar-key: $KEY" -d '{"action":"list","source":"nope"}')"
+
 section "8. Digest end to end (sends ONE real email containing the synthetic job)"
 sleep 5   # GSI propagation is eventually consistent
 FE=$(aws lambda invoke --function-name job-radar-digest /tmp/jr_digest.json --query FunctionError --output text)

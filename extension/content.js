@@ -1,4 +1,4 @@
-const JR_VERSION = '0.3.3';
+const JR_VERSION = '0.3.4';
 console.log(`[job-radar] content script loaded v${JR_VERSION}`, window.location.href);
 
 const SELECTORS = {
@@ -188,18 +188,44 @@ const LABELS = {
   error: 'Retry capture',
 };
 
-// The Apply/Save row is LinkedIn's flex layout: adding a child squeezes the buttons, so we never touch it.
-// Our button gets its own line right below the row. If Save sits alone in a wrapper, the row is the wrapper's parent.
-const insertionPoint = (anchor) => (anchor.parentElement && anchor.parentElement.children.length === 1 ? anchor.parentElement : anchor);
-const rowOf = (anchor) => insertionPoint(anchor).parentElement;
-
-function makeHost(btn, anchored) {
+// LinkedIn's layout around the Apply/Save row is fragile: inserting anything next to it squeezed or overlapped
+// the buttons. So we never insert into it. Our button lives in a fixed-position host on <body> and is placed
+// beside Save from its on-screen rectangle; it hides when Save is covered (modal, sticky bar) or scrolled away.
+function makeHost(btn) {
   const host = document.createElement('div');
   host.id = HOST_ID;
-  if (anchored) Object.assign(host.style, { display: 'flex', marginTop: '8px' }); // block-level: natural-width button, own line
-  else Object.assign(host.style, { position: 'fixed', right: '24px', bottom: '90px', zIndex: 9999 });
+  Object.assign(host.style, { position: 'fixed', zIndex: 9999, display: 'flex', alignItems: 'stretch' });
   host.appendChild(btn);
   return host;
+}
+
+function positionHost(host, anchor) {
+  const btn = host.querySelector('button');
+  if (!btn) return;
+  if (!anchor) {
+    // No Save button found: float above LinkedIn's messaging dock instead.
+    Object.assign(host.style, { display: 'flex', left: 'auto', top: 'auto', right: '24px', bottom: '90px' });
+    btn.style.height = '';
+    return;
+  }
+  const r = anchor.getBoundingClientRect();
+  let visible = r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < window.innerHeight;
+  if (visible && typeof document.elementFromPoint === 'function') {
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    visible = !!hit && (hit === anchor || anchor.contains(hit)); // Save is actually on top, not under a modal/bar
+  }
+  if (!visible) {
+    host.style.display = 'none';
+    return;
+  }
+  Object.assign(host.style, {
+    display: 'flex',
+    left: `${Math.round(r.right + 8)}px`,
+    top: `${Math.round(r.top)}px`,
+    right: 'auto',
+    bottom: 'auto',
+  });
+  btn.style.height = `${Math.round(r.height)}px`; // same height as LinkedIn's pill
 }
 
 function setBtn(btn, state, detail) {
@@ -227,7 +253,7 @@ function makeBtn(anchor) {
     btn.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
     btn.querySelectorAll('svg, img').forEach((n) => n.remove());
     btn.__label = [...btn.querySelectorAll('*')].find((e) => !e.children.length && e.textContent.trim()) || null;
-    btn.style.flex = '0 0 auto';
+    Object.assign(btn.style, { flex: '0 0 auto', width: 'auto', minWidth: '0', margin: '0', whiteSpace: 'nowrap' });
   } else {
     btn = document.createElement('button');
     // Fallback when LinkedIn's markup changes: a floating button (above the messaging dock) that always works.
@@ -276,22 +302,20 @@ async function uiTick() {
       return;
     }
     const anchor = findSaveButton();
-    const row = anchor ? rowOf(anchor) : null;
-    const wantFloating = !row;
-    logMode(row ? 'own line below the Apply/Save row' : 'floating (Save button not found)');
-    if (host && (host.dataset.floating === '1') !== wantFloating) {
-      host.remove(); // layout changed, rebuild
+    logMode(anchor ? 'beside the Save button (overlay)' : 'floating (Save button not found)');
+    if (host && (host.dataset.anchored === '1') !== !!anchor) {
+      host.remove(); // look source changed (cloned vs standalone style), rebuild
       host = null;
     }
-    if (!host || !host.querySelector('button') || (row && row.nextElementSibling !== host)) {
+    if (!host || !host.querySelector('button')) {
       host?.remove();
       const fresh = makeBtn(anchor);
-      host = makeHost(fresh, !wantFloating);
-      host.dataset.floating = wantFloating ? '1' : '0';
+      host = makeHost(fresh);
+      host.dataset.anchored = anchor ? '1' : '0';
       setBtn(fresh, 'idle');
-      if (row) row.insertAdjacentElement('afterend', host);
-      else document.body.appendChild(host);
+      document.body.appendChild(host);
     }
+    positionHost(host, anchor);
     const btn = host.querySelector('button');
     if (btn.dataset.state === 'busy') return;
 
@@ -304,6 +328,18 @@ async function uiTick() {
     console.warn('[job-radar] button error:', err.message);
   }
 }
+
+// Keep the overlay glued to Save while scrolling, resizing or when LinkedIn re-flows the page.
+let frame = 0;
+function reposition() {
+  frame = 0;
+  const host = document.getElementById(HOST_ID);
+  if (host) positionHost(host, findSaveButton());
+}
+const scheduleReposition = () => { if (!frame) frame = requestAnimationFrame(reposition); };
+window.addEventListener('scroll', scheduleReposition, true); // capture: LinkedIn scrolls an inner pane, not the window
+window.addEventListener('resize', scheduleReposition);
+setInterval(scheduleReposition, 300);
 
 setInterval(uiTick, 1000);
 

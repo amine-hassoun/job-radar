@@ -25,7 +25,7 @@ data "aws_iam_policy_document" "ingest" {
   }
   statement {
     sid       = "ExportAndDeleteCapturedJobs"
-    actions   = ["dynamodb:BatchGetItem", "dynamodb:DeleteItem"]
+    actions   = ["dynamodb:BatchGetItem", "dynamodb:DeleteItem", "dynamodb:UpdateItem"]
     resources = [aws_dynamodb_table.jobs.arn]
   }
   statement {

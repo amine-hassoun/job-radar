@@ -2,6 +2,8 @@ const $ = (id) => document.getElementById(id);
 const out = $('out');
 const msg = $('msg');
 let listed = []; // jobs currently shown (summaries, no descriptions)
+let source = 'linkedin-extension'; // which tab is open: 'linkedin-extension' | 'remoteok'
+const TABS = { 'linkedin-extension': 'tab-linkedin', remoteok: 'tab-remoteok' };
 
 const api = (body) => chrome.runtime.sendMessage({ type: 'JOB_RADAR_API', body });
 
@@ -61,7 +63,10 @@ function render(jobs) {
   if (!jobs.length) {
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.textContent = $('fits').checked ? 'No captured job fits your profile yet.' : 'Nothing captured yet.';
+    empty.textContent =
+      source === 'remoteok'
+        ? 'No RemoteOK match yet. The daily fetch runs at 04:00 UTC.'
+        : $('fits').checked ? 'No captured job fits your profile yet.' : 'Nothing captured yet.';
     box.appendChild(empty);
     return;
   }
@@ -101,7 +106,7 @@ function render(jobs) {
 
 async function loadList() {
   note('Loading…');
-  const res = await api({ action: 'list', only_fits: $('fits').checked });
+  const res = await api({ action: 'list', source, only_fits: $('fits').checked });
   if (res.status !== 200) {
     note(res.status === 401 ? '❌ Server rejected the key (check config.js)' : `❌ Could not load (${res.status || res.error})`);
     return;
@@ -139,7 +144,7 @@ $('copy').addEventListener('click', async () => {
   note(`Fetching ${ids.length} description(s)…`);
   const jobs = [];
   for (let i = 0; i < ids.length; i += 100) {
-    const res = await api({ action: 'export', job_ids: ids.slice(i, i + 100) });
+    const res = await api({ action: 'export', source, job_ids: ids.slice(i, i + 100) });
     if (res.status !== 200) return note(`❌ Export failed (${res.status || res.error})`);
     jobs.push(...res.body.jobs);
   }
@@ -152,11 +157,26 @@ $('copy').addEventListener('click', async () => {
 $('del').addEventListener('click', async () => {
   const ids = checkedIds();
   if (!ids.length) return note('Check the jobs you applied to first.');
-  if (!confirm(`Delete ${ids.length} job(s) from storage? Use this after you've applied. It can't be undone.`)) return;
-  const res = await chrome.runtime.sendMessage({ type: 'JOB_RADAR_DELETE', ids });
+  const warning =
+    source === 'remoteok'
+      ? `Remove ${ids.length} RemoteOK job(s)? Their descriptions are erased; they won't come back in the daily fetch.`
+      : `Delete ${ids.length} job(s) from storage? Use this after you've applied. It can't be undone.`;
+  if (!confirm(warning)) return;
+  const res = await chrome.runtime.sendMessage({ type: 'JOB_RADAR_DELETE', ids, source });
   if (res.status !== 200) return note(`❌ Delete failed (${res.status || res.error})`);
   await loadList();
   note(`🗑 Deleted ${res.body.deleted} job(s).`);
 });
 
-loadList();
+// ---- tabs ----
+function selectTab(next) {
+  source = next;
+  for (const [src, id] of Object.entries(TABS)) $(id).classList.toggle('active', src === source);
+  $('heading').textContent = source === 'remoteok' ? 'RemoteOK matches' : 'Captured jobs';
+  chrome.storage.local.set({ tab: source });
+  return loadList();
+}
+$('tab-linkedin').addEventListener('click', () => selectTab('linkedin-extension'));
+$('tab-remoteok').addEventListener('click', () => selectTab('remoteok'));
+
+chrome.storage.local.get('tab').then(({ tab }) => selectTab(tab in TABS ? tab : 'linkedin-extension'));

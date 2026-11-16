@@ -6,6 +6,9 @@
       body { width: 400px; font: 13px system-ui; margin: 12px; }
       button { padding: 7px 10px; cursor: pointer; }
       .full { width: 100%; }
+      .tabs { display: flex; gap: 6px; margin: 4px 0 8px; }
+      .tab { flex: 1; border: 1px solid #1A3C5E; background: #fff; color: #1A3C5E; border-radius: 999px; }
+      .tab.active { background: #1A3C5E; color: #fff; }
       .row { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin: 8px 0; }
       label { display: flex; gap: 6px; align-items: center; }
       pre { white-space: pre-wrap; max-height: 90px; overflow: auto; margin: 6px 0; }
@@ -27,8 +30,12 @@
     <pre id="out"></pre>
 
     <hr />
+    <div class="tabs">
+      <button id="tab-linkedin" class="tab active">LinkedIn captures</button>
+      <button id="tab-remoteok" class="tab">RemoteOK matches</button>
+    </div>
     <div class="row">
-      <strong>Captured jobs</strong>
+      <strong id="heading">Captured jobs</strong>
       <label><input type="checkbox" id="fits" checked /> only profile fits</label>
     </div>
     <div class="row">
