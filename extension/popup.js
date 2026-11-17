@@ -54,12 +54,12 @@ $('capture').addEventListener('click', async () => {
 // ---- list of captured jobs ----
 const checkedIds = () => [...document.querySelectorAll('#jobs input[type=checkbox]:checked')].map((c) => c.value);
 
-function render(jobs) {
+function render(jobs, more = false) {
   listed = jobs;
   const box = $('jobs');
   box.replaceChildren(); // textContent/DOM APIs only: job titles come from the web and must never be parsed as HTML
   $('all').checked = false;
-  $('count').textContent = `${jobs.length} job${jobs.length === 1 ? '' : 's'}`;
+  $('count').textContent = more ? `best ${jobs.length} (more below)` : `${jobs.length} job${jobs.length === 1 ? '' : 's'}`;
   if (!jobs.length) {
     const empty = document.createElement('div');
     empty.className = 'empty';
@@ -111,7 +111,7 @@ async function loadList() {
     note(res.status === 401 ? '❌ Server rejected the key (check config.js)' : `❌ Could not load (${res.status || res.error})`);
     return;
   }
-  render(res.body.jobs);
+  render(res.body.jobs, !!res.body.more);
   note('');
 }
 
@@ -163,7 +163,10 @@ $('del').addEventListener('click', async () => {
       : `Delete ${ids.length} job(s) from storage? Use this after you've applied. It can't be undone.`;
   if (!confirm(warning)) return;
   const res = await chrome.runtime.sendMessage({ type: 'JOB_RADAR_DELETE', ids, source });
-  if (res.status !== 200) return note(`❌ Delete failed (${res.status || res.error})`);
+  if (res.status !== 200) {
+    await loadList();
+    return note(`❌ Delete stopped (${res.status || res.error}) after ${res.body?.deleted ?? 0} of ${ids.length}. Try again.`);
+  }
   await loadList();
   note(`🗑 Deleted ${res.body.deleted} job(s).`);
 });

@@ -181,6 +181,7 @@ curl -s -X POST "$INGEST_URL" -H 'Content-Type: application/json' \
 - **Full descriptions.** LinkedIn shows only the first part of a long description until "… more" is clicked. Before every capture (button, popup or record mode) the extension clicks that control, but only the one inside the description block, never another section's "see more", then waits for the text to grow. A description that is already expanded is captured as is.
 - **Finding the data.** LinkedIn's class names are obfuscated, so the content script locates things by structure: the detail pane is the ancestor of the Save button that holds "About the job"; the title is the link to the current job; the company is the `/company/` link; the location is the first item of the "4 days ago · applicants" line.
 - **Local mirror.** The service worker keeps `captured` and `deleted` maps in `chrome.storage.local` so buttons render instantly, and re-syncs from the server at most every 10 minutes. Record mode skips anything already captured or deleted, which saves Lambda calls and write units.
+- **Bulk actions.** Each tab lists the best 200 jobs by score, and the popup says "more below" when there are more. The API accepts at most 100 ids per request and every delete spends write units from a tiny provisioned budget, so deleting runs in batches of 25. If a batch fails, the earlier batches stay deleted and the popup reports how far it got.
 - **Safe rendering.** Job titles come from the web, so the popup builds its lists with DOM APIs and `textContent`, never `innerHTML`.
 
 ### The digest
@@ -452,6 +453,8 @@ aws s3 rb "s3://$BUCKET" --force
 | Quick start: `AccessDenied` during the deploy | Your AWS user lacks permissions. Use an admin user in a personal or sandbox account. |
 | Quick start: email not confirmed after 5 minutes | Check spam, then re-send the confirmation: `terraform -chdir=infra apply -replace=aws_sns_topic_subscription.email`. Once confirmed, run `aws lambda invoke --function-name job-radar-digest /dev/stdout`. |
 | Quick start: `infra/backend.tf` was renamed | That file points at the author's state bucket, so the script moved it to `backend.tf.disabled` and used local state. Nothing to fix. |
+| `Delete failed (400)` | You are on an extension older than 0.4.2, which sent "select all" as one request (the API takes 100 ids at most). Reload the extension from the current `extension/` folder. |
+| `Delete stopped (500) after N of M` | The table's small write capacity was exhausted by a big bulk delete. Wait a minute and run it again; the remaining jobs are still listed. |
 | No Capture button | Open the console and filter by `job-radar`. You should see `content script loaded v...` and `button: beside the Save button`. No version means Chrome is loading an old copy: remove the extension and load the folder again. If LinkedIn changed its markup, adjust `structural()` and `findSaveButton()` in `content.js`. |
 | Popup shows "Server rejected the key" | `key` in `config.js` does not match the SSM parameter. |
 | Popup shows a network error | Wrong `endpoint`, or the region in `manifest.json` `host_permissions` does not match. |

@@ -153,7 +153,8 @@ def api_list(body):
         }
         for it in resp["Items"]
     ]
-    return reply(200, {"jobs": jobs, "min_score": min_score, "source": source})
+    # LastEvaluatedKey means the 200-item page was full and more jobs exist below it.
+    return reply(200, {"jobs": jobs, "min_score": min_score, "source": source, "more": "LastEvaluatedKey" in resp})
 
 
 def api_export(body):

@@ -53,7 +53,7 @@ resource "aws_lambda_function" "ingest" {
   handler          = "ingest.handler"
   filename         = data.archive_file.app.output_path
   source_code_hash = data.archive_file.app.output_base64sha256
-  timeout          = 10
+  timeout          = 30 # deleting many large items can wait on the tiny provisioned write capacity
   memory_size      = 128
 
   environment {

@@ -182,3 +182,24 @@ def test_remoteok_delete_unknown_id_creates_nothing(aws):
 def test_unknown_source_rejected(aws):
     for action in ("list", "export", "delete"):
         assert call(aws, {"action": action, "source": "adzuna", "job_ids": ["12345"]})[0] == 400
+
+
+# ---- list cut-off and the 100-id limit ----
+def test_list_reports_when_more_jobs_exist_than_one_page(aws):
+    for i in range(205):
+        item = aws.store.build_item(source="linkedin-extension", ext_id=str(5000000000 + i), title="SRE", company="Co",
+                                    location="x", description=LONG_DESC, url=f"https://x/{i}", similarity=0.2)
+        aws.store.put_new(item)
+    body = call(aws, {"action": "list"})[1]
+    assert len(body["jobs"]) == 200 and body["more"] is True
+
+
+def test_list_says_no_more_when_everything_fits(aws):
+    aws.ingest.handler(event([job("1111111111")]), None)
+    assert call(aws, {"action": "list"})[1]["more"] is False
+
+
+def test_delete_accepts_100_ids_and_rejects_101(aws):
+    ids = [str(6000000000 + i) for i in range(101)]
+    assert call(aws, {"action": "delete", "job_ids": ids[:100]}) == (200, {"deleted": 100})
+    assert call(aws, {"action": "delete", "job_ids": ids})[0] == 400   # the error the popup used to hit with "select all"

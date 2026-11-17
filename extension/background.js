@@ -46,18 +46,28 @@ async function sync() {
   return result;
 }
 
+// The API accepts at most 100 ids per request, and every delete spends write units from a tiny provisioned
+// budget, so delete in small batches. Progress is kept: if a batch fails, earlier batches stay deleted.
+const DELETE_BATCH = 25;
+
 async function deleteJobs(ids, source = 'linkedin-extension') {
-  const result = await post({ action: 'delete', job_ids: ids, source });
-  // The local mirror only tracks LinkedIn captures; RemoteOK deletions are remembered server-side (tombstone).
-  if (result.status === 200 && source === 'linkedin-extension') {
-    const { captured = {}, deleted = {} } = await chrome.storage.local.get(['captured', 'deleted']);
-    for (const id of ids) {
-      delete captured[id];
-      deleted[id] = Date.now();
+  let deleted = 0;
+  for (let i = 0; i < ids.length; i += DELETE_BATCH) {
+    const batch = ids.slice(i, i + DELETE_BATCH);
+    const result = await post({ action: 'delete', job_ids: batch, source });
+    if (result.status !== 200) return { ...result, body: { ...result.body, deleted } };
+    deleted += result.body.deleted;
+    // The local mirror only tracks LinkedIn captures; RemoteOK deletions are remembered server-side (tombstone).
+    if (source === 'linkedin-extension') {
+      const { captured = {}, deleted: gone = {} } = await chrome.storage.local.get(['captured', 'deleted']);
+      for (const id of batch) {
+        delete captured[id];
+        gone[id] = Date.now();
+      }
+      await chrome.storage.local.set({ captured, deleted: gone });
     }
-    await chrome.storage.local.set({ captured, deleted });
   }
-  return result;
+  return { status: 200, body: { deleted } };
 }
 
 const HANDLERS = {
