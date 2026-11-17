@@ -1,4 +1,4 @@
-const JR_VERSION = '0.3.4';
+const JR_VERSION = '0.4.1';
 console.log(`[job-radar] content script loaded v${JR_VERSION}`, window.location.href);
 
 const SELECTORS = {
@@ -32,8 +32,8 @@ function firstText(selectors) {
   return null;
 }
 
-// Fallback: find the "About the job" heading, walk up to a container with real text.
-function descriptionByHeading() {
+// The description block: the "About the job" heading's nearest ancestor that holds real text.
+function descriptionContainer() {
   const heading = [...document.querySelectorAll('h2, h3, span')].find(
     (el) => el.textContent.trim().toLowerCase() === 'about the job'
   );
@@ -42,7 +42,51 @@ function descriptionByHeading() {
   while (node && node !== document.body && node.innerText.trim().length < 200) {
     node = node.parentElement;
   }
-  return node && node !== document.body ? node.innerText.trim() : null;
+  return node && node !== document.body ? node : null;
+}
+
+function descriptionByHeading() {
+  return descriptionContainer()?.innerText.trim() || null;
+}
+
+// LinkedIn renders only the first part of a long description until its "... more" link is clicked.
+const MORE_RE = /^(…|\.{3})?\s*(see |show |voir )?(more|plus)$/i;
+const clean = (text) => (text || '').replace(/\s+/g, ' ').trim();
+
+// Only a "more" control INSIDE the description block, never another section's "see more".
+function findMoreControl() {
+  const box = descriptionContainer();
+  if (!box) return null;
+  return [...box.querySelectorAll('button, a, [role="button"], [tabindex], span')].find((el) => MORE_RE.test(clean(el.textContent))) || null;
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function expandDescription() {
+  const control = findMoreControl();
+  if (!control) return false; // already expanded, or this layout shows everything
+  const before = descriptionContainer().innerText.length;
+  control.click();
+  for (let i = 0; i < 20; i++) { // wait up to ~2 s for LinkedIn to render the rest
+    await sleep(100);
+    const now = descriptionContainer()?.innerText.length || 0;
+    if (now > before + 5 || !findMoreControl()) { // grew, or the control is gone: LinkedIn expanded it
+      console.info(`[job-radar] description expanded: ${before} -> ${now} characters`);
+      return true;
+    }
+  }
+  console.info('[job-radar] clicked "more" but the description did not grow');
+  return false;
+}
+
+// Expand, then read: every capture path goes through here.
+async function captureFull() {
+  try {
+    await expandDescription();
+  } catch (err) {
+    console.warn('[job-radar] could not expand the description:', err.message);
+  }
+  return capture();
 }
 
 function getJobId() {
@@ -106,7 +150,9 @@ function capture() {
   const company = firstText(SELECTORS.company) || fallback.company;
   const place = (firstText(SELECTORS.place)?.split('·')[0].trim()) || fallback.place || null;
   const description = (firstText(SELECTORS.description) || descriptionByHeading())
-    ?.replace(/^about the job\s*/i, '');
+    ?.replace(/^about the job\s*/i, '')
+    .replace(/\s*(…|\.{3})?\s*(see |show )?(more|less)\s*$/i, '') // trailing "... more" / "Show less" control text
+    .trim();
 
   const required = { jobId, title, company, description };
   const missing = Object.entries(required).filter(([, v]) => !v).map(([k]) => k);
@@ -130,9 +176,11 @@ function capture() {
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === 'JOB_RADAR_CAPTURE') {
-    const result = capture();
-    console.log('[job-radar]', result);
-    sendResponse(result);
+    captureFull().then((result) => {
+      console.log('[job-radar]', result);
+      sendResponse(result);
+    });
+    return true; // answer asynchronously: we may need to expand the description first
   }
 });
 
@@ -163,7 +211,7 @@ async function recordTick() {
     if (attempts >= MAX_ATTEMPTS) return;
     attempts += 1;
 
-    const result = capture();
+    const result = await captureFull();
     if (!result.ok) return;
     // Same text as the previous job = the right-hand pane hasn't re-rendered yet. Retry next tick.
     if (result.job.description === lastDescription) return;
@@ -270,7 +318,7 @@ function makeBtn(anchor) {
     event.stopPropagation();
     if (btn.dataset.state !== 'idle' && btn.dataset.state !== 'error') return;
     setBtn(btn, 'busy');
-    const result = capture();
+    const result = await captureFull();
     if (!result.ok) return setBtn(btn, 'error', result.error);
     try {
       const res = await chrome.runtime.sendMessage({ type: 'JOB_RADAR_SEND', job: result.job });
