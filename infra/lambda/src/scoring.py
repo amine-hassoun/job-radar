@@ -5,7 +5,9 @@ import os
 import re
 from collections import Counter
 
-with open(os.path.join(os.path.dirname(__file__), "profile.json"), encoding="utf-8") as f:
+# JOB_RADAR_PROFILE lets scripts/profile.py try a profile before it is deployed. The Lambdas never set it.
+_PROFILE_PATH = os.environ.get("JOB_RADAR_PROFILE") or os.path.join(os.path.dirname(__file__), "profile.json")
+with open(_PROFILE_PATH, encoding="utf-8") as f:
     PROFILE = json.load(f)
 
 FLAGS = re.IGNORECASE
@@ -55,41 +57,42 @@ def similarities(docs):
 
 
 def score_job(title, description, location, similarity, remote_hint=False):
-    """Return {"score": 0-100 int, "matched": [skills], "flags": [strings]}."""
+    """Return {"score": 0-100 int, "matched": [skills], "flags": [strings], "parts": {component: points}}."""
     title = title or ""
     description = description or ""
     location = location or ""
     text = f"{title}\n{description}"
     flags = []
+    parts = {"title": 0, "skills": 0, "similarity": 0, "remote": 0, "location": 0, "eligibility": 0, "seniority": 0}
 
-    points = 0
     if _TITLE_EXCLUDE.search(title):
-        points -= 30
+        parts["title"] = -30
         flags.append("title-excluded")
     elif _TITLE_INCLUDE.search(title):
-        points += 30
+        parts["title"] = 30
 
     matched = [(name, weight) for name, weight, rx in _SKILLS if rx.search(text)]
-    points += min(SKILL_CAP, sum(w for _, w in matched))
+    parts["skills"] = min(SKILL_CAP, sum(w for _, w in matched))
 
-    points += round(10 * min(1.0, similarity / 0.25))  # sim of 0.25+ already counts as a strong match
+    parts["similarity"] = round(10 * min(1.0, similarity / 0.25))  # sim of 0.25+ already counts as a strong match
 
     is_remote = remote_hint or bool(_REMOTE.search(f"{title} {location} {description[:1500]}"))
     if is_remote:
-        points += 10
+        parts["remote"] = 10
     if is_remote or _LOCATION_OK.search(location):
-        points += 5
+        parts["location"] = 5
 
     if any(rx.search(text) for rx in _ELIGIBILITY):
-        points -= 30
+        parts["eligibility"] = -30
         flags.append("check-eligibility")  # visa / residency / language wording: read the posting
     if _SENIORITY.search(text):
-        points -= 10
+        parts["seniority"] = -10
         flags.append("senior-wording")
 
     matched.sort(key=lambda m: -m[1])
     return {
-        "score": max(0, min(100, int(points))),
+        "score": max(0, min(100, int(sum(parts.values())))),
         "matched": [name for name, _ in matched[:12]],
         "flags": flags,
+        "parts": parts,
     }

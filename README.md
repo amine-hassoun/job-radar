@@ -61,7 +61,7 @@ Good to know:
 - **Permissions:** your AWS user needs to create Lambda, DynamoDB, IAM roles, SNS, EventBridge, CloudWatch and SSM resources. On a personal account, `AdministratorAccess` is the simplest.
 - **Check it:** `./scripts/verify.sh` runs about 40 end-to-end checks (it needs Python only for its small helpers).
 - **Remove it:** see [Tear it all down](#12-tear-it-all-down).
-- **Make it yours:** the next thing to do is edit `infra/lambda/src/profile.json` (your skills, target titles, score threshold), then run `terraform -chdir=infra apply`. [Details here](#10-make-it-yours).
+- **Make it yours:** the profile is the author's (DevOps, Europe). Tailor it to your CV in a few minutes with `python3 scripts/tailor.py init --cv cv.txt --titles "your target titles" --force`, then `terraform -chdir=infra apply`. [Details here](#10-tailor-it-to-your-cv-and-profile).
 
 ## What it does
 
@@ -131,6 +131,8 @@ Scores run 0-100. Everything tunable lives in `infra/lambda/src/profile.json`, n
 | Remote or an EU location | +5 | |
 | Eligibility wording | -30 | "US only", "must be located in", work authorisation, fluent German/Dutch/...: the job is flagged `check-eligibility` rather than hidden. |
 | Seniority wording | -10 | "Principal", "staff engineer", "10+ years", ... flagged `senior-wording`. |
+
+Every number above comes from your profile: see [Tailor it to your CV](#10-tailor-it-to-your-cv-and-profile).
 
 The result is clamped to 0-100. A score of **45 or more** counts as a "fit" (`digest_min_score`); anything under 15 is not stored at all (`store_min_score`). Every stored job keeps the list of skills that matched, so a score is never a black box.
 
@@ -218,7 +220,7 @@ job-radar/
 │       ├── ingest.py fetch.py digest.py
 │       ├── scoring.py store.py
 │       └── profile.json       All scoring data
-├── scripts/                   quickstart.sh, verify.sh, reset_data.py, export_remoteok.py, backfill_captured.sh
+├── scripts/                   quickstart.sh, tailor.py, verify.sh, reset_data.py, export_remoteok.py, backfill_captured.sh
 ├── tests/                     pytest + moto
 ├── .github/workflows/checks.yml
 └── .checkov.yaml              Accepted IaC findings, each with a reason
@@ -408,29 +410,84 @@ If you run Chrome on Windows and the repo in WSL, load the folder through its Wi
 cd ..
 python3 -m venv .venv && source .venv/bin/activate
 pip install boto3 "moto[dynamodb,ssm,sns]" pytest
-pytest tests -q            # 35 passed
+pytest tests -q            # 59 passed
 ./scripts/verify.sh        # about 40 end-to-end checks against your AWS account
 ```
 
 `verify.sh` checks drift, indexes, the capacity pool, function settings, the subscription, schedules, alarms, the API (auth, validation, scoring, duplicates, list, export, delete for both sources), a live fetch and a real digest email. It creates two synthetic jobs and deletes them at the end. Expect `RESULT: N passed, 0 failed`.
 
-### 10. Make it yours
+### 10. Tailor it to your CV and profile
 
-Edit `infra/lambda/src/profile.json`, then `terraform apply` (the zip hash changes, so the three functions update).
+Out of the box the profile is the author's: DevOps and cloud roles, Europe, English and French. Everything that decides what you see lives in one file, `infra/lambda/src/profile.json`, and `scripts/tailor.py` builds it from your CV. It runs on your laptop, needs no AWS access and no network.
+
+**Where is the "search"?** job-radar runs no keyword searches. On LinkedIn, the jobs are the postings you open (use LinkedIn's own filters and saved searches to steer what you see). From RemoteOK, the daily fetch downloads the whole public feed and the profile decides what matters: a job scoring at least `store_min_score` (15) is stored, and at least `digest_min_score` (45) is emailed. So tailoring the search means tailoring the profile.
+
+**1. Get your CV as text.** A `.txt` or `.md` file works as is. For a PDF, `pdftotext -layout cv.pdf cv.txt` (the tool also reads PDFs directly if `pdftotext` or `pypdf` is installed).
+
+**2. Generate a draft profile** (no AWS needed):
+
+```bash
+python3 scripts/tailor.py init --cv cv.txt \
+  --titles "data engineer, analytics engineer" \
+  --locations "france, germany, netherlands" \
+  --languages "english, french" \
+  --level mid --force
+```
+
+| Option | What it sets |
+|---|---|
+| `--cv` | The skills found in your CV, each weighted 1-9 by how often it appears (about 4 for one mention, 7 for three, 9 for seven). The 25 most prominent are kept. |
+| `--titles` (required) | The titles that earn the +30 title bonus. Title exclusions adapt: if you target "data scientist", that title is no longer excluded. |
+| `--locations` | Places that earn the +5 location bonus. Leave it out and only remote jobs get it. |
+| `--languages` | Languages you speak. A posting that requires fluency in any other language is flagged `check-eligibility`. |
+| `--level` | `junior`, `mid` (default) or `senior`: which seniority wording is penalised (for example "10+ years" for `mid`, "graduate" for `senior`). |
+| `--exclude` | Extra title words to rule out, for example `"consultant, support"`. |
+| `--min-score` | The score needed to be emailed (default 45). |
+
+The tool prints every skill it found with its weight. **It copies nothing from your CV into the profile** except skill names, so your name, email and phone never end up in the repository.
+
+Not sure which titles to target? Paste your CV into any AI assistant and ask it for ten job titles it fits, then use them as `--titles`. The app itself never calls an AI.
+
+**3. Validate it.** A broken regex would crash all three Lambdas at start-up, so check before you deploy:
+
+```bash
+python3 scripts/tailor.py check        # errors block deployment; warnings are advice
+```
+
+**4. Try it on real postings.** Paste a posting into a file and see exactly where the points come from:
+
+```bash
+python3 scripts/tailor.py try --title "Senior Data Engineer" --location "Remote, Europe" < posting.txt
+```
+```
+Score 84/100   (FIT, would be emailed; fit threshold 45)
+
+  title        +30   target title (+30) or excluded title (-30)
+  skills       +32   matched: airflow, spark, dbt, snowflake  (capped at 40)
+  similarity    +7   TF-IDF cosine 0.18 (0.25 = full 10 points)
+  remote       +10   remote wording found
+  location      +5   remote, or a place from your list
+```
+
+Try one posting you would love and one you would hate. When the scores match your instinct, you are done; if not, edit `profile.json` (below), `check`, and `try` again.
+
+**5. Deploy.** `terraform -chdir=infra apply` (the three functions get the new profile). Jobs are scored when they are stored, so jobs already in the table keep their old scores. To re-score everything, run `python3 scripts/reset_data.py` and then the fetch (this also removes your LinkedIn captures).
+
+**Tuning by hand.** Every field of `profile.json`:
 
 | Field | What it controls |
 |---|---|
-| `profile_text` | The text every posting is compared with (TF-IDF). Put your skills and role words here. |
+| `profile_text` | The words every posting is compared with (TF-IDF). `init` fills it with your titles and skills. |
 | `title_include` / `title_exclude` | Which titles earn +30 / -30 |
-| `skills` | `{name, weight, pattern}` rules. Weights add up to at most 40 points. |
+| `skills` | `{name, weight, pattern}` rules. Their weights add up to at most 40 points. |
 | `remote_pattern`, `location_ok_pattern` | Remote and location bonuses |
-| `eligibility_patterns` | Visa, residency and language wording to flag |
+| `eligibility_patterns` | Visa, residency and language wording to flag. The defaults flag US/UK work-authorisation wording: remove those lines if you can work there. |
 | `seniority_penalty_pattern` | Wording that suggests the wrong seniority |
 | `digest_min_score` | Score needed to count as a fit and be emailed (default 45) |
 | `store_min_score` | Score under which a RemoteOK job is not stored (default 15) |
 | `max_digest_items` | Maximum jobs per email (default 25) |
 
-A good tuning loop: open the RemoteOK tab, look at what scored high and low, adjust weights, apply, then run the fetch again.
+Limits to know: the skill vocabulary behind `init` covers about 90 technology skills and tools, so for another field or a niche tool, add `skills` entries by hand. RemoteOK is mostly remote tech roles, so for other fields the daily feed may offer little. And always run `check` after editing by hand.
 
 ### 11. Turn on CI (optional)
 
@@ -467,6 +524,7 @@ aws s3 rb "s3://$BUCKET" --force
 
 ```bash
 ./scripts/quickstart.sh you@example.com               # one-command install (safe to re-run)
+python3 scripts/tailor.py init|check|try              # tailor the scoring to your CV (step 10 of the tutorial)
 ./scripts/verify.sh                                   # full end-to-end check
 aws lambda invoke --function-name job-radar-fetch --cli-read-timeout 130 /dev/stdout   # fetch now
 aws logs tail /aws/lambda/job-radar-fetch --since 1h  # recent logs (14-day retention)
@@ -479,7 +537,7 @@ After `reset_data.py`, clear the extension's cache: `chrome://extensions` → th
 
 ## Testing and CI
 
-`pytest` with `moto` (no AWS account needed) runs **35 tests**: scoring (good and bad jobs, eligibility and title flags, similarity range), ingest (auth, validation, duplicates), fetch (parsing, idempotency, total failure raises), digest (sends once, empties the pending index), the API for both sources (list, export, delete, tombstones that block a re-fetch, source isolation, validation), the helper scripts, and the **quick start script itself**, run end to end against stubbed `aws` and `terraform` binaries (fresh install, re-run, unconfirmed email, missing credentials or region, old Terraform, declined prompt, bad usage).
+`pytest` with `moto` (no AWS account needed) runs **59 tests**: scoring (good and bad jobs, eligibility and title flags, similarity range), ingest (auth, validation, duplicates), fetch (parsing, idempotency, total failure raises), digest (sends once, empties the pending index), the API for both sources (list, export, delete, tombstones that block a re-fetch, source isolation, validation), the helper scripts, the **profile tool** (skills and weights from a CV, no personal data copied, validation catches what would break a Lambda, a tailored profile really changes the scores), and the **quick start script itself**, run end to end against stubbed `aws` and `terraform` binaries (fresh install, re-run, unconfirmed email, missing credentials or region, old Terraform, declined prompt, bad usage).
 
 CI (`.github/workflows/checks.yml`) runs on every push and pull request:
 
@@ -515,6 +573,7 @@ Lessons from building it:
 ## Limitations and roadmap
 
 - LinkedIn's markup changes often; the extension may need selector updates.
+- Profile generation covers tech roles; other fields need hand-edited skills.
 - One job source besides LinkedIn (RemoteOK). Adding one means a new fetch function and a new `source` partition.
 - RemoteOK descriptions are cut at 4,000 characters.
 - CI runs static checks only. A plan/apply pipeline with OIDC is a natural next step.

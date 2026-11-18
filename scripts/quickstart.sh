@@ -132,5 +132,9 @@ Done. Last step (30 seconds):
   2. Open any LinkedIn job: a Capture button appears next to Save.
      Click the extension icon to see your RemoteOK matches.
 
+Make it yours: the scoring profile is the author's (DevOps, Europe). Tailor it to your CV in a few minutes:
+  python3 scripts/tailor.py init --cv your-cv.txt --titles "your target titles" --force
+  (then: python3 scripts/tailor.py check, and  terraform -chdir=infra apply)
+
 Daily digest: 05:30 UTC.  Check everything: ./scripts/verify.sh.  Remove everything: see "Tear it all down" in the README.
 DONE
